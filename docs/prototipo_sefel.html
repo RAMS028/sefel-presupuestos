@@ -1,0 +1,72 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Prototipo SEFEL – Presupuestos y Costos</title>
+<style>
+:root{--bg:#f5f5f5;--cd:#fff;--tx:#1b1b1b;--mu:#555;--pr:#1F4E79;--pt:#fff;--ok:#2E7D32;--er:#C62828;--wa:#F9A825;--bd:#d0d5dd;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14181d;--cd:#1e242b;--tx:#e8eaed;--mu:#aab3bd;--pr:#5b9bd5;--pt:#0b1620;--ok:#66bb6a;--er:#ef6b6b;--wa:#f9c74f;--bd:#3a434d}}
+:root[data-theme="dark"]{--bg:#14181d;--cd:#1e242b;--tx:#e8eaed;--mu:#aab3bd;--pr:#5b9bd5;--pt:#0b1620;--ok:#66bb6a;--er:#ef6b6b;--wa:#f9c74f;--bd:#3a434d}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,Arial,sans-serif}
+header{background:var(--pr);color:var(--pt);padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header b{flex:1}nav{display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--bd)}
+nav button{background:var(--cd);color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:8px 12px;cursor:pointer;font:inherit}
+nav button.on{background:var(--pr);color:var(--pt);border-color:var(--pr)}
+main{max-width:980px;margin:0 auto;padding:16px}.card{background:var(--cd);border:1px solid var(--bd);border-radius:8px;padding:16px;margin-bottom:16px}
+h2{margin:0 0 4px;font-size:20px}.mu{color:var(--mu);font-size:14px;margin:0 0 12px}
+label{display:block;font-size:14px;margin:8px 0 2px}input,select{width:100%;padding:8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx);font:inherit}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.b{background:var(--pr);color:var(--pt);border:0;border-radius:6px;padding:9px 16px;cursor:pointer;font:inherit;margin-top:12px}
+.w{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:7px 8px;border-bottom:1px solid var(--bd);text-align:left}th{background:var(--pr);color:var(--pt)}td.n,th.n{text-align:right}
+.msg{padding:9px 12px;border-radius:6px;margin-top:12px;font-size:14px;border:1px solid}.ok{color:var(--ok);border-color:var(--ok)}.er{color:var(--er);border-color:var(--er)}.wa{color:var(--tx);border-color:var(--wa);background:color-mix(in srgb,var(--wa) 22%,transparent)}
+.bar{height:12px;background:var(--bd);border-radius:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ok);width:0}
+.tag{font-size:12px;border:1px solid var(--bd);border-radius:10px;padding:1px 8px;color:var(--mu)}
+</style></head><body>
+<header><b>SEFEL · Gestión de presupuestos y costos <span class="tag" style="color:var(--pt);border-color:var(--pt)">Prototipo</span></b><span id="who"></span><button class="b" style="margin:0;background:var(--pt);color:var(--pr)" onclick="out()" id="lo" hidden>Cerrar sesión</button></header>
+<nav id="nav"></nav><main id="m"></main>
+<script>
+const $=id=>document.getElementById(id),fm=n=>'$'+Math.round(n).toLocaleString('es-CL'),U=1.2;
+let R=[['MAT-001','Cemento portland 25 kg','saco','Material',6500],['MAT-002','Arena gruesa','m3','Material',18000],['MOB-001','Maestro albañil','hora','Mano de obra',5200],['EQP-001','Betonera 150 L','día','Equipo',22000],['MAT-003','Fierro 8 mm','barra',"Material",7800]].map(r=>({c:r[0],d:r[1],u:r[2],t:r[3],p:r[4]}));
+let H=R.map(r=>({c:r.c,a:null,n:r.p,f:'01-11-2026',o:'Registro inicial'}));
+const A=[{n:'Radier h=10 cm',u:'m2',l:[['MAT-001',.25],['MAT-002',.1],['MOB-001',.8],['EQP-001',.05]]},{n:'Muro de albañilería',u:'m2',l:[['MAT-001',.15],['MAT-003',.6],['MOB-001',1.4]]}];
+const neto=a=>a.l.reduce((s,[c,q])=>s+q*R.find(r=>r.c==c).p,0);
+let P=[{n:'Bodega Coelemu',b:[[0,120]],k:[]},{n:'Ampliación Quirihue',b:[[1,80]],k:[]},{n:'Radier Ñiquén',b:[],k:[]}];
+P[0].k=[{p:0,t:'Ejecución',e:'Ejecutado',m:2400000,d:'Mano de obra'},{p:0,t:'Compra',e:'Comprometido',m:900000,d:'Cemento'}];
+P[1].k=[{p:0,t:'Ejecución',e:'Ejecutado',m:420000,d:'Albañilería'}];
+const pres=p=>p.b.reduce((s,[i,q])=>s+q*neto(A[i])*U,0);
+let role=null,view=null,pj=0,last=null,gen=null;
+const M={enc:[['rec','Registrar y filtrar recursos (HU-01/02)'],['pre','Actualizar precios (HU-03)'],['his','Historial (HU-04)'],['ppt','Presupuestos desde APU (HU-05/06)']],
+jef:[['cos','Registrar costos (HU-07)'],['cmp','Comparar (HU-08)'],['est','Estado de costos (HU-09)']],ger:[['ind','Indicadores (HU-10)']]};
+const N={enc:'Encargado de Presupuestos',jef:'Jefe de Proyecto',ger:'Gerencia General'};
+const msg=(t,c)=>`<div class="msg ${c}" role="status">${t}</div>`;
+function draw(extra=''){ $('who').textContent=role?N[role]:''; $('lo').hidden=!role;
+ $('nav').innerHTML=role?M[role].map(([k,t])=>`<button class="${k==view?'on':''}" onclick="go('${k}')">${t}</button>`).join(''):'';
+ $('m').innerHTML=role?V[view]()+extra:login();}
+const go=k=>{view=k;last=null;gen=null;draw()};
+const out=()=>{role=null;last=null;draw()};
+function login(){return `<div class="card"><h2>Inicio de sesión</h2><p class="mu">Prototipo: elija un perfil para ver las opciones que le corresponden (RNF-01 / RNF-02).</p>
+<label>Correo<input id="em" value="usuario@sefel.cl"></label><label>Clave<input type="password" id="pw" value="••••••••••••"></label><label>Perfil<select id="rl"><option value="enc">Encargado de Presupuestos</option><option value="jef">Jefe de Proyecto</option><option value="ger">Gerencia General</option></select></label>
+<button class="b" onclick="role=$('rl').value;view=M[role][0][0];draw()">Ingresar</button></div>`}
+function psel(){return `<div class="card"><label>Seleccione un proyecto<select onchange="pj=+this.value;last=null;draw()">${P.map((p,i)=>`<option value="${i}" ${i==pj?'selected':''}>${p.n}</option>`).join('')}</select></label></div>`}
+function tbl(h,rows,n=[]){return `<div class="w"><table><tr>${h.map((x,i)=>`<th class="${n.includes(i)?'n':''}">${x}</th>`).join('')}</tr>${rows.map(r=>`<tr>${r.map((x,i)=>`<td class="${n.includes(i)?'n':''}">${x}</td>`).join('')}</tr>`).join('')}</table></div>`}
+const V={
+rec(){const f=window.F||{q:'',o:'a'};let l=R.filter(r=>r.d.toLowerCase().includes(f.q.toLowerCase()));l=[...l].sort((a,b)=>f.o=='a'?a.d.localeCompare(b.d):b.p-a.p);
+return `<div class="card"><h2>Registro de nuevos recursos</h2><p class="mu">HU-01 · Todos los campos son obligatorios.</p><div class="row"><label>Código<input id="c"></label><label>Descripción<input id="d"></label><label>Unidad<input id="u"></label><label>Tipo<select id="t"><option>Material</option><option>Mano de obra</option><option>Equipo</option></select></label><label>Precio ($)<input id="p" type="number" min="0"></label></div><button class="b" onclick="addR()">Registrar</button>${last||''}</div>
+<div class="card"><h2>Filtro de consultas</h2><p class="mu">HU-02</p><div class="row"><label>Texto<input id="fq" value="${f.q}"></label><label>Orden<select id="fo"><option value="a">Alfabético</option><option value="p" ${f.o=='p'?'selected':''}>Por precio (mayor a menor)</option></select></label></div><button class="b" onclick="window.F={q:$('fq').value,o:$('fo').value};draw()">Filtrar</button>
+${msg(l.length+' resultado(s) encontrados','wa')}${tbl(['#','Código','Descripción','Unidad','Tipo','Precio'],l.map((r,i)=>[i+1,r.c,r.d,r.u,r.t,fm(r.p)]),[5])}</div>`},
+pre(){return `<div class="card"><h2>Actualizar precios de los recursos</h2><p class="mu">HU-03 · Modifique los valores y presione «Actualizar». El precio anterior se conserva en el historial.</p>${tbl(['Código','Descripción','Precio actual','Nuevo precio'],R.map((r,i)=>[r.c,r.d,fm(r.p),`<input type="number" min="0" id="np${i}" value="${r.p}" style="width:120px">`]),[2])}<button class="b" onclick="updP()">Actualizar</button>${last||''}</div>`},
+his(){const s=window.HS||R[0].c;const l=H.filter(h=>h.c==s).reverse();return `<div class="card"><h2>Historial de precios</h2><p class="mu">HU-04 · Solo consulta (el historial no se puede modificar).</p><label>Recurso<select onchange="window.HS=this.value;draw()">${R.map(r=>`<option value="${r.c}" ${r.c==s?'selected':''}>${r.c} – ${r.d}</option>`).join('')}</select></label>${tbl(['Fecha','Precio anterior','Precio nuevo','Origen'],l.map(h=>[h.f,h.a==null?'—':fm(h.a),fm(h.n),h.o]),[1,2])}</div>`},
+ppt(){let g='';if(gen){const a=A[gen.i],nt=neto(a),t=gen.q*nt*U;g=`<h2 style="margin-top:16px">Presupuesto generado</h2>${msg('Archivo Presupuesto_'+a.n.replace(/\W+/g,'_')+'.xlsx creado (en el sistema real se abre automáticamente en Excel).','ok')}${tbl(['Partida','Unidad','Cantidad','Costo neto unit.','Utilidad 20 %','Total'],[[a.n,a.u,`<input type="number" min="1" value="${gen.q}" style="width:90px" oninput="gen.q=Math.max(1,+this.value||1);rc()">`,fm(nt),fm(nt*.2),`<b id="tt">${fm(t)}</b>`]],[2,3,4,5])}<p class="mu">HU-06 · Al cambiar la cantidad, los totales se recalculan automáticamente.</p>`}
+return `<div class="card"><h2>Creación de presupuestos a partir de APU</h2><p class="mu">HU-05 · Costo de cada APU con precios vigentes.</p>${tbl(['APU','Unidad','Costo neto unitario'],A.map(a=>[a.n,a.u,fm(neto(a))]),[2])}<div class="row"><label>APU<select id="ai">${A.map((a,i)=>`<option value="${i}">${a.n}</option>`).join('')}</select></label><label>Cantidad<input id="aq" type="number" min="1" value="100"></label></div><button class="b" onclick="mk()">Generar Presupuesto</button><div class="bar" id="br" style="margin-top:12px" hidden><i id="bi"></i></div>${g}</div>`},
+cos(){const p=P[pj];return psel()+`<div class="card"><h2>Registrar los costos reales de ejecución</h2><p class="mu">HU-07 · Un costo indirecto puede registrarse sin partida.</p><div class="row"><label>Partida<select id="kp"><option value="-1">Costo indirecto (sin partida)</option>${p.b.map(([i])=>`<option value="${i}">${A[i].n}</option>`).join('')}</select></label><label>Tipo<select id="kt"><option>Ejecución</option><option>Compra</option></select></label><label>Estado<select id="ke"><option>Ejecutado</option><option>Comprometido</option></select></label><label>Monto ($)<input id="km" type="number" min="1"></label><label>Detalle<input id="kd"></label></div><button class="b" onclick="addK()">Registrar</button>${last||''}</div><div class="card"><h2>Costos registrados</h2>${p.k.length?tbl(['Detalle','Tipo','Estado','Monto'],p.k.map(k=>[k.d||'—',k.t,k.e,fm(k.m)]),[3]):msg('Aún no hay costos registrados.','wa')}</div>`},
+cmp(){const p=P[pj],b=pres(p),r=p.k.filter(k=>k.e=='Ejecutado').reduce((s,k)=>s+k.m,0);let c;
+if(!p.k.some(k=>k.e=='Ejecutado'))c=msg('No existen costos ejecutados para comparar.','wa');else if(!b)c=msg('Este proyecto no tiene presupuesto.','wa');else{const d=r-b,pc=d/b*100;c=tbl(['Presupuestado','Costo real ejecutado','Desviación','%'],[[fm(b),fm(r),fm(d),pc.toFixed(1)+' %']],[0,1,2,3])+(pc>10?msg('Alerta: la desviación supera el umbral de 10 %.','er'):msg('Dentro del umbral de desviación.','ok'))}
+return psel()+`<div class="card"><h2>Comparar costos reales y presupuestados</h2><p class="mu">HU-08</p>${c}</div>`},
+est(){const p=P[pj],s=e=>p.k.filter(k=>k.e==e).reduce((a,k)=>a+k.m,0);return psel()+`<div class="card"><h2>Estado de los costos del proyecto</h2><p class="mu">HU-09</p>${tbl(['Presupuestado','Comprometido','Ejecutado','Disponible'],[[fm(pres(p)),fm(s('Comprometido')),fm(s('Ejecutado')),fm(pres(p)-s('Comprometido')-s('Ejecutado'))]],[0,1,2,3])}</div>`},
+ind(){return `<div class="card"><h2>Indicadores de costos y rentabilidad</h2><p class="mu">HU-10 · Solo lectura, todos los proyectos.</p>${tbl(['Proyecto','Presupuestado','Costo real','Margen real','Utilidad objetivo'],P.map(p=>{const b=pres(p),r=p.k.reduce((s,k)=>s+k.m,0);return b?[p.n,fm(b),fm(r),`${((b-r)/b*100).toFixed(1)} %<div class="bar"><i style="width:${Math.max(0,Math.min(100,(b-r)/b*100))}%"></i></div>`,'20 %']:[p.n,'—','—','Datos insuficientes para calcular','20 %']}),[1,2])}</div>`}};
+function addR(){const v=['c','d','u','p'].map(i=>$(i).value.trim());if(v.some(x=>!x)){last=msg('Complete todos los campos obligatorios.','er');return draw()}
+if(R.some(r=>r.c==v[0])){last=msg('El código ya existe: no se permiten recursos duplicados.','er');return draw()}
+R.push({c:v[0],d:v[1],u:v[2],t:$('t').value,p:+v[3]});H.push({c:v[0],a:null,n:+v[3],f:'02-11-2026',o:'Registro inicial'});last=msg('Recurso registrado correctamente.','ok');draw()}
+function updP(){let n=0;R.forEach((r,i)=>{const v=+$('np'+i).value;if(v>=0&&v!=r.p){H.push({c:r.c,a:r.p,n:v,f:'02-11-2026',o:'Manual'});r.p=v;n++}});last=msg(n?n+' precio(s) actualizado(s) correctamente. El historial conserva los valores anteriores.':'No hay cambios que actualizar.',n?'ok':'wa');draw()}
+function rc(){const a=A[gen.i];$('tt').textContent=fm(gen.q*neto(a)*U)}
+function mk(){gen=null;const i=+$('ai').value,q=Math.max(1,+$('aq').value||1);draw();$('br').hidden=false;let x=0;const t=setInterval(()=>{x+=10;$('bi').style.width=x+'%';if(x>=100){clearInterval(t);gen={i,q};draw()}},120)}
+function addK(){const m=+$('km').value;if(!(m>0)){last=msg('Ingrese un monto mayor a cero.','er');return draw()}const p=+$('kp').value;if(p<0)0;P[pj].k.push({p,t:$('kt').value,e:$('ke').value,m,d:$('kd').value.trim()||(p<0?'Costo indirecto':A[p].n)});last=msg('Costo registrado y asociado al proyecto.','ok');draw()}
+draw();
+</script></body></html>
