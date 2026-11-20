@@ -1,0 +1,18 @@
+# Qt Creator project-local settings
+.qtcreator/
+*.user
+
+# CMake and compiled output
+build/
+cmake-build-*/
+*.o
+*.obj
+*.dll
+*.exe
+*.a
+*.lib
+
+# Local secrets / environment configuration
+.env
+.env.*
+!.env.example
