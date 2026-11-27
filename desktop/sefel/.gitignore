@@ -4,6 +4,7 @@
 
 # CMake and compiled output
 build/
+build*/
 cmake-build-*/
 *.o
 *.obj

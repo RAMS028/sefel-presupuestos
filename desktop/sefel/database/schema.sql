@@ -20,6 +20,42 @@ CREATE TABLE IF NOT EXISTS recurso (
   tipo VARCHAR(15) NOT NULL CHECK (tipo IN ('MATERIAL','MANO_OBRA','EQUIPO','HERRAMIENTA')),
   precio_vigente NUMERIC(14,2) NOT NULL CHECK (precio_vigente >= 0)
 );
+-- Normaliza códigos antiguos y arbitrarios para que cumplan el formato del tipo.
+DO $$
+DECLARE r RECORD; prefix TEXT; next_code INTEGER; candidate TEXT;
+BEGIN
+  FOR r IN SELECT id_recurso,tipo,codigo FROM recurso ORDER BY id_recurso LOOP
+    prefix := CASE r.tipo
+      WHEN 'MATERIAL' THEN 'MAT'
+      WHEN 'MANO_OBRA' THEN 'MO'
+      WHEN 'EQUIPO' THEN 'EQP'
+      ELSE 'HER'
+    END;
+    IF r.codigo !~ ('^' || prefix || '-[0-9]{4}$') THEN
+      SELECT COALESCE(MAX(substring(codigo from '[0-9]+$')::integer),0)+1
+        INTO next_code FROM recurso
+        WHERE tipo=r.tipo AND codigo ~ ('^' || prefix || '-[0-9]{4}$');
+      candidate := prefix || '-' || lpad(next_code::text,4,'0');
+      WHILE EXISTS (SELECT 1 FROM recurso WHERE codigo=candidate) LOOP
+        next_code := next_code + 1;
+        candidate := prefix || '-' || lpad(next_code::text,4,'0');
+      END LOOP;
+      UPDATE recurso SET codigo=candidate WHERE id_recurso=r.id_recurso;
+    END IF;
+  END LOOP;
+END $$;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_recurso_codigo_formato') THEN
+    ALTER TABLE recurso ADD CONSTRAINT ck_recurso_codigo_formato CHECK (
+      codigo ~ '^(MAT|MO|EQP|HER)-[0-9]{4}$' AND
+      ((tipo='MATERIAL' AND codigo LIKE 'MAT-%') OR
+       (tipo='MANO_OBRA' AND codigo LIKE 'MO-%') OR
+       (tipo='EQUIPO' AND codigo LIKE 'EQP-%') OR
+       (tipo='HERRAMIENTA' AND codigo LIKE 'HER-%'))
+    ) NOT VALID;
+  END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS historial_precio (
   id_historial SERIAL PRIMARY KEY,
   id_recurso INTEGER NOT NULL REFERENCES recurso(id_recurso) ON DELETE RESTRICT,

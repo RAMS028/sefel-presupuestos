@@ -30,7 +30,10 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     MainWindow(int userId, const QString &userName, const QString &role, QWidget *parent = nullptr);
+signals:
+    void logoutRequested();
 private slots:
+    void logout();
     void reloadResources();
     void addResource();
     void changePrice();
@@ -43,6 +46,8 @@ private:
     void buildResourcesTab();
     void buildPricesTab();
     void buildBudgetTab();
+    void refreshCodePreview();
+    QString generateResourceCode() const;
     int selectedResourceId() const;
     int m_userId;
     QString m_userName, m_role;
@@ -50,6 +55,7 @@ private:
     QTabWidget *m_tabs;
     QLineEdit *m_resourceFilter, *m_code, *m_description, *m_unit;
     QComboBox *m_type;
+    QDoubleSpinBox *m_initialPrice;
     QTableWidget *m_resources, *m_apuLines;
     QComboBox *m_priceResource;
     QDoubleSpinBox *m_newPrice, *m_markup;

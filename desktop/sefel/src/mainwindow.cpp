@@ -35,6 +35,12 @@ static QTableWidget *makeTable(QWidget *parent, const QStringList &headers) {
     table->setAlternatingRowColors(true);
     return table;
 }
+static QString codePrefix(const QString &type) {
+    if (type == "MATERIAL") return "MAT";
+    if (type == "MANO_OBRA") return "MO";
+    if (type == "EQUIPO") return "EQP";
+    return "HER";
+}
 
 LoginWindow::LoginWindow(QWidget *parent) : QDialog(parent) {
     setWindowTitle("SEFEL | Iniciar sesión");
@@ -79,7 +85,13 @@ MainWindow::MainWindow(int userId, const QString &userName, const QString &role,
     QString displayRole=role; displayRole.replace('_',' ');
     auto *welcome = new QLabel(QString("%1  ·  %2").arg(userName, displayRole));
     welcome->setStyleSheet("font-size:15px;font-weight:600;color:#183b56;padding:6px;");
-    root->addWidget(welcome);
+    auto *sessionBar = new QHBoxLayout;
+    auto *logoutButton = new QPushButton("Cerrar sesión");
+    sessionBar->addWidget(welcome);
+    sessionBar->addStretch();
+    sessionBar->addWidget(logoutButton);
+    root->addLayout(sessionBar);
+    connect(logoutButton, &QPushButton::clicked, this, &MainWindow::logout);
     m_tabs = new QTabWidget; root->addWidget(m_tabs);
     setCentralWidget(central);
     buildResourcesTab(); buildPricesTab(); buildBudgetTab();
@@ -100,18 +112,20 @@ void MainWindow::buildResourcesTab() {
     layout->addWidget(m_resources,1);
     auto *form = new QFormLayout;
     auto *row = new QHBoxLayout;
-    m_code = new QLineEdit; m_description = new QLineEdit; m_unit = new QLineEdit;
+    m_code = new QLineEdit; m_code->setReadOnly(true); m_description = new QLineEdit; m_unit = new QLineEdit;
     m_type = new QComboBox; m_type->addItems({"MATERIAL","MANO_OBRA","EQUIPO","HERRAMIENTA"});
+    m_initialPrice = new QDoubleSpinBox; m_initialPrice->setRange(0,999999999); m_initialPrice->setDecimals(2); m_initialPrice->setPrefix("$ ");
     row->addWidget(new QLabel("Código")); row->addWidget(m_code);
     row->addWidget(new QLabel("Descripción")); row->addWidget(m_description,2);
     row->addWidget(new QLabel("Unidad")); row->addWidget(m_unit);
-    row->addWidget(m_type);
+    row->addWidget(m_type); row->addWidget(new QLabel("Precio vigente")); row->addWidget(m_initialPrice);
     form->addRow("Nuevo recurso", row); layout->addLayout(form);
     auto *add = new QPushButton("Registrar recurso"); layout->addWidget(add,0,Qt::AlignRight);
-    add->setEnabled(m_canEdit); m_code->setEnabled(m_canEdit); m_description->setEnabled(m_canEdit); m_unit->setEnabled(m_canEdit); m_type->setEnabled(m_canEdit);
+    add->setEnabled(m_canEdit); m_code->setEnabled(m_canEdit); m_description->setEnabled(m_canEdit); m_unit->setEnabled(m_canEdit); m_type->setEnabled(m_canEdit); m_initialPrice->setEnabled(m_canEdit);
     connect(search,&QPushButton::clicked,this,&MainWindow::reloadResources);
     connect(m_resourceFilter,&QLineEdit::returnPressed,this,&MainWindow::reloadResources);
     connect(add,&QPushButton::clicked,this,&MainWindow::addResource);
+    connect(m_type, &QComboBox::currentTextChanged, this, [this] { refreshCodePreview(); });
     connect(m_resources,&QTableWidget::itemSelectionChanged,this,[this]{
         if (selectedResourceId() > 0) {
             for (int i=0;i<m_priceResource->count();++i)
@@ -119,6 +133,7 @@ void MainWindow::buildResourcesTab() {
         }
     });
     m_tabs->addTab(page,"Recursos · HU-01/02");
+    refreshCodePreview();
 }
 
 void MainWindow::buildPricesTab() {
@@ -181,22 +196,49 @@ void MainWindow::reloadResources() {
     for(int i=0;i<m_priceResource->count();++i) if(m_priceResource->itemData(i).toInt()==previous) m_priceResource->setCurrentIndex(i);
 }
 
+QString MainWindow::generateResourceCode() const {
+    const QString prefix = codePrefix(m_type->currentText());
+    QSqlQuery q;
+    q.prepare("SELECT COALESCE(MAX(substring(codigo from '[0-9]+$')::integer),0)+1 "
+              "FROM recurso WHERE codigo LIKE :pattern");
+    q.bindValue(":pattern", prefix + "-%");
+    if (!q.exec() || !q.next()) return {};
+    return prefix + "-" + QString("%1").arg(q.value(0).toInt(), 4, 10, QChar('0'));
+}
+
+void MainWindow::refreshCodePreview() {
+    const QString code = generateResourceCode();
+    m_code->setText(code.isEmpty() ? "(se asignará al guardar)" : code);
+}
+
+void MainWindow::logout() {
+    hide();
+    emit logoutRequested();
+}
+
 int MainWindow::selectedResourceId() const {
     const int row=m_resources->currentRow(); if(row<0 || !m_resources->item(row,0)) return 0;
     return m_resources->item(row,0)->text().toInt();
 }
 
 void MainWindow::addResource() {
-    if(m_code->text().trimmed().isEmpty()||m_description->text().trimmed().isEmpty()||m_unit->text().trimmed().isEmpty()) { QMessageBox::warning(this,"Datos requeridos","Completa código, descripción y unidad."); return; }
-    bool ok=false; const double price=QInputDialog::getDouble(this,"Precio inicial","Precio vigente",0,0,999999999,2,&ok); if(!ok)return;
-    QSqlDatabase::database().transaction();
+    if(m_description->text().trimmed().isEmpty()||m_unit->text().trimmed().isEmpty()) { QMessageBox::warning(this,"Datos requeridos","Completa descripción y unidad."); return; }
+    auto db = QSqlDatabase::database();
+    if (!db.transaction()) { QMessageBox::critical(this,"Error","No se pudo iniciar la transacción."); return; }
+    QSqlQuery lock;
+    if (!lock.exec("LOCK TABLE recurso IN EXCLUSIVE MODE")) { db.rollback(); showDbError(this,lock); return; }
+    const QString code = generateResourceCode();
+    if (code.isEmpty()) { db.rollback(); QMessageBox::critical(this,"Error","No se pudo generar el código del recurso."); return; }
+    const double price=m_initialPrice->value();
     QSqlQuery q; q.prepare("INSERT INTO recurso(codigo,descripcion,unidad,tipo,precio_vigente) VALUES(:c,:d,:u,:t,:p) RETURNING id_recurso");
-    q.bindValue(":c",m_code->text().trimmed()); q.bindValue(":d",m_description->text().trimmed()); q.bindValue(":u",m_unit->text().trimmed()); q.bindValue(":t",m_type->currentText()); q.bindValue(":p",price);
+    q.bindValue(":c",code); q.bindValue(":d",m_description->text().trimmed()); q.bindValue(":u",m_unit->text().trimmed()); q.bindValue(":t",m_type->currentText()); q.bindValue(":p",price);
     if(!q.exec()||!q.next()) { QSqlDatabase::database().rollback(); showDbError(this,q); return; }
     const int id=q.value(0).toInt();
     QSqlQuery h; h.prepare("INSERT INTO historial_precio(id_recurso,id_usuario,precio_anterior,precio_nuevo,origen) VALUES(:r,:u,NULL,:p,'MANUAL')"); h.bindValue(":r",id); h.bindValue(":u",m_userId); h.bindValue(":p",price);
     if(!h.exec()) { QSqlDatabase::database().rollback(); showDbError(this,h); return; }
-    QSqlDatabase::database().commit(); m_code->clear();m_description->clear();m_unit->clear();reloadResources();
+    if (!db.commit()) { db.rollback(); QMessageBox::critical(this,"Error","No se pudo confirmar el registro."); return; }
+    m_description->clear();m_unit->clear();m_initialPrice->setValue(0);reloadResources();refreshCodePreview();
+    QMessageBox::information(this,"Recurso registrado",QString("Recurso %1 guardado correctamente.").arg(code));
 }
 
 void MainWindow::changePrice() {

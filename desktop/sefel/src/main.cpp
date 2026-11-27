@@ -13,9 +13,15 @@ int main(int argc, char *argv[]) {
             "Verifica las variables SEFEL_DB_* y que la base de datos esté creada.\n\n" + error);
         return 1;
     }
-    LoginWindow login;
-    if (login.exec() != QDialog::Accepted) return 0;
-    MainWindow window(login.userId(), login.userName(), login.role());
-    window.show();
-    return app.exec();
+    constexpr int logoutExitCode = 42;
+    while (true) {
+        LoginWindow login;
+        if (login.exec() != QDialog::Accepted) return 0;
+        MainWindow window(login.userId(), login.userName(), login.role());
+        QObject::connect(&window, &MainWindow::logoutRequested, &app,
+                         [&app] { app.exit(logoutExitCode); });
+        window.show();
+        const int result = app.exec();
+        if (result != logoutExitCode) return result;
+    }
 }

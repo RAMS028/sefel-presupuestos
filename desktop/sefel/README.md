@@ -33,3 +33,5 @@ La contraseña de cada usuario se guarda con `crypt()` de `pgcrypto`. El usuario
 - Los precios ficticios de `seed.sql` son solo demostración.
 - El presupuesto conserva el costo unitario neto como copia al momento de guardarlo. La utilidad inicial es 20% y se puede editar.
 - Exportación CSV UTF-8 compatible con Excel, evitando dependencias externas.
+- Los códigos de recurso son automáticos y siguen `PREFIJO-NNNN`: `MAT`, `MO`, `EQP` y `HER` por tipo. Los precios iguales a cero están permitidos.
+- **Cerrar sesión** vuelve a mostrar el login. La matriz de casos funcionales y de seguridad está en `docs/pruebas_funcionales_mvp.md`.
