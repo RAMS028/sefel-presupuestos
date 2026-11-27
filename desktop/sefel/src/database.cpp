@@ -10,18 +10,23 @@ bool Database::connect(QString *error) {
         }
         return false;
     }
-    auto database = QSqlDatabase::addDatabase("QPSQL");
     const QString host = qEnvironmentVariable("SEFEL_DB_HOST", "localhost").trimmed();
     bool portOk = false;
     const QString portText = qEnvironmentVariable("SEFEL_DB_PORT", "5432").trimmed();
     const int port = portText.toInt(&portOk);
     if (!portOk || port < 1 || port > 65535) {
         if (error) *error = "El puerto configurado en SEFEL_DB_PORT no es válido. Usa un número entre 1 y 65535 (normalmente 5432).";
-        database.close();
         return false;
     }
     const QString databaseName = qEnvironmentVariable("SEFEL_DB_NAME", "sefel").trimmed();
     const QString userName = qEnvironmentVariable("SEFEL_DB_USER", "postgres").trimmed();
+    if (QSqlDatabase::contains(QSqlDatabase::defaultConnection)) {
+        QSqlDatabase previous = QSqlDatabase::database();
+        previous.close();
+        previous = QSqlDatabase();
+        QSqlDatabase::removeDatabase(QSqlDatabase::defaultConnection);
+    }
+    auto database = QSqlDatabase::addDatabase("QPSQL");
     database.setHostName(host);
     database.setPort(port);
     database.setDatabaseName(databaseName);

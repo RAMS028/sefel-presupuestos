@@ -311,7 +311,7 @@ void MainWindow::reloadResources() {
         const QSignalBlocker blockPriceSelection(m_priceResource);
         m_priceResource->clear(); m_lineResource->clear();
         QSqlQuery list;
-        if (!list.exec("SELECT id_recurso,codigo || ' · ' || descripcion || ' ($' || precio_vigente || ') FROM recurso WHERE activo ORDER BY descripcion")) {
+        if (!list.exec("SELECT id_recurso,concat(codigo,' · ',descripcion,' ($',precio_vigente,')') FROM recurso WHERE activo ORDER BY descripcion")) {
             showDbError(this,list,"No se pudo cargar la lista de recursos para precios y APU.");
             return;
         }
