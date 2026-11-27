@@ -121,6 +121,25 @@ CREATE TABLE IF NOT EXISTS presupuesto (
   total NUMERIC(16,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
   id_usuario INTEGER NOT NULL REFERENCES usuario(id_usuario)
 );
+-- Migra instalaciones anteriores: agregan nombre/usuario y dejan opcional el proyecto legado.
+ALTER TABLE presupuesto ADD COLUMN IF NOT EXISTS nombre VARCHAR(150);
+ALTER TABLE presupuesto ADD COLUMN IF NOT EXISTS id_usuario INTEGER REFERENCES usuario(id_usuario);
+UPDATE presupuesto
+   SET nombre='Presupuesto ' || id_presupuesto::text
+ WHERE nombre IS NULL OR btrim(nombre)='';
+ALTER TABLE presupuesto ALTER COLUMN nombre SET NOT NULL;
+UPDATE presupuesto
+   SET id_usuario=(SELECT id_usuario FROM usuario ORDER BY id_usuario LIMIT 1)
+ WHERE id_usuario IS NULL AND EXISTS (SELECT 1 FROM usuario);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema=current_schema() AND table_name='presupuesto' AND column_name='id_proyecto'
+  ) THEN
+    ALTER TABLE presupuesto ALTER COLUMN id_proyecto DROP NOT NULL;
+  END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS partida (
   id_partida SERIAL PRIMARY KEY,
   id_presupuesto INTEGER NOT NULL REFERENCES presupuesto(id_presupuesto) ON DELETE CASCADE,
