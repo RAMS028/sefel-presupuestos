@@ -1,6 +1,6 @@
 # Pruebas funcionales y de seguridad — SEFEL Desktop MVP
 
-**Versión:** 1.0.1  
+**Versión:** 1.0.2  
 **Alcance:** login por roles, recursos HU-01/02, precios e historial HU-03/04 y APU/presupuesto HU-05/06.  
 **Nota:** completar los campos de resultado y evidencia durante la ejecución. Este documento no declara pruebas como aprobadas antes de ejecutarlas.
 

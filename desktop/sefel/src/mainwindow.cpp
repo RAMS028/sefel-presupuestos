@@ -22,6 +22,48 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 
+namespace {
+constexpr const char *kColorRed = "#C62828";
+constexpr const char *kColorBlack = "#171717";
+constexpr const char *kColorGray = "#A8A8A8";
+constexpr const char *kColorWhite = "#FFFFFF";
+
+const QString kAppStyleSheet = QString(R"(
+    QWidget { background-color: %4; color: %2; }
+    QLineEdit, QComboBox, QDoubleSpinBox {
+        background-color: %4; color: %2; border: 1px solid %3;
+        border-radius: 4px; padding: 4px 6px;
+    }
+    QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus { border: 1px solid %1; }
+    QPushButton {
+        background-color: %2; color: %4; border: 1px solid %2;
+        border-radius: 4px; padding: 6px 12px; font-weight: 600;
+    }
+    QPushButton:hover { background-color: %1; border-color: %1; }
+    QPushButton:disabled { background-color: %3; border-color: %3; color: %4; }
+    QTabWidget::pane { border: 1px solid %3; background-color: %4; }
+    QTabBar::tab {
+        background-color: %3; color: %2; padding: 8px 14px;
+        border-top-left-radius: 4px; border-top-right-radius: 4px;
+        margin-right: 2px; font-weight: 600;
+    }
+    QTabBar::tab:selected { background-color: %2; color: %4; }
+    QTableWidget {
+        background-color: %4; alternate-background-color: #F5F5F5;
+        color: %2; gridline-color: %3; border: 1px solid %3;
+    }
+    QHeaderView::section {
+        background-color: %2; color: %4; padding: 6px;
+        border: 1px solid %3; font-weight: 600;
+    }
+)" ).arg(kColorRed, kColorBlack, kColorGray, kColorWhite);
+
+void setAccentButton(QPushButton *button) {
+    button->setStyleSheet(QString("background-color:%1;color:%2;border:1px solid %1;")
+                              .arg(kColorRed, kColorWhite));
+}
+} // namespace
+
 static void showDbError(QWidget *parent, const QSqlQuery &q) {
     QMessageBox::critical(parent, "Error de base de datos", q.lastError().text());
 }
@@ -45,9 +87,10 @@ static QString codePrefix(const QString &type) {
 LoginWindow::LoginWindow(QWidget *parent) : QDialog(parent) {
     setWindowTitle("SEFEL | Iniciar sesión");
     setMinimumWidth(380);
+    setStyleSheet(kAppStyleSheet);
     auto *layout = new QVBoxLayout(this);
     auto *title = new QLabel("Gestión de Presupuestos y Costos");
-    title->setStyleSheet("font-size:20px;font-weight:700;color:#183b56;padding:10px 0;");
+    title->setStyleSheet(QString("font-size:20px;font-weight:700;color:%1;padding:10px 0;").arg(kColorBlack));
     layout->addWidget(title);
     auto *form = new QFormLayout;
     m_email = new QLineEdit; m_email->setPlaceholderText("usuario@sefel.local");
@@ -55,6 +98,7 @@ LoginWindow::LoginWindow(QWidget *parent) : QDialog(parent) {
     form->addRow("Correo", m_email); form->addRow("Contraseña", m_password);
     layout->addLayout(form);
     auto *button = new QPushButton("Ingresar");
+    setAccentButton(button);
     button->setDefault(true); layout->addWidget(button);
     connect(button, &QPushButton::clicked, this, &LoginWindow::authenticate);
     connect(m_password, &QLineEdit::returnPressed, this, &LoginWindow::authenticate);
@@ -80,11 +124,12 @@ MainWindow::MainWindow(int userId, const QString &userName, const QString &role,
       m_canEdit(role == "ENCARGADO_PRESUPUESTOS") {
     setWindowTitle("SEFEL | Presupuestos y costos");
     resize(1120, 720);
+    setStyleSheet(kAppStyleSheet);
     auto *central = new QWidget;
     auto *root = new QVBoxLayout(central);
     QString displayRole=role; displayRole.replace('_',' ');
     auto *welcome = new QLabel(QString("%1  ·  %2").arg(userName, displayRole));
-    welcome->setStyleSheet("font-size:15px;font-weight:600;color:#183b56;padding:6px;");
+    welcome->setStyleSheet(QString("font-size:15px;font-weight:600;color:%1;padding:6px;").arg(kColorBlack));
     auto *sessionBar = new QHBoxLayout;
     auto *logoutButton = new QPushButton("Cerrar sesión");
     sessionBar->addWidget(welcome);
@@ -121,6 +166,7 @@ void MainWindow::buildResourcesTab() {
     row->addWidget(m_type); row->addWidget(new QLabel("Precio vigente")); row->addWidget(m_initialPrice);
     form->addRow("Nuevo recurso", row); layout->addLayout(form);
     auto *add = new QPushButton("Registrar recurso"); layout->addWidget(add,0,Qt::AlignRight);
+    setAccentButton(add);
     add->setEnabled(m_canEdit); m_code->setEnabled(m_canEdit); m_description->setEnabled(m_canEdit); m_unit->setEnabled(m_canEdit); m_type->setEnabled(m_canEdit); m_initialPrice->setEnabled(m_canEdit);
     connect(search,&QPushButton::clicked,this,&MainWindow::reloadResources);
     connect(m_resourceFilter,&QLineEdit::returnPressed,this,&MainWindow::reloadResources);
@@ -146,6 +192,7 @@ void MainWindow::buildPricesTab() {
     form->addRow("Recurso",m_priceResource); form->addRow("Nuevo precio",m_newPrice); layout->addLayout(form);
     auto *buttons = new QHBoxLayout;
     auto *update = new QPushButton("Guardar precio"); auto *history = new QPushButton("Ver historial");
+    setAccentButton(update); setAccentButton(history);
     buttons->addWidget(update); buttons->addWidget(history); buttons->addStretch(); layout->addLayout(buttons);
     connect(update,&QPushButton::clicked,this,&MainWindow::changePrice);
     connect(history,&QPushButton::clicked,this,&MainWindow::showPriceHistory);
@@ -173,10 +220,12 @@ void MainWindow::buildBudgetTab() {
     m_markup = new QDoubleSpinBox; m_markup->setRange(0,999); m_markup->setDecimals(2); m_markup->setValue(20); m_markup->setSuffix(" %");
     auto *budgetQty = new QDoubleSpinBox; budgetQty->setObjectName("budgetQty"); budgetQty->setRange(0.0001,99999999); budgetQty->setDecimals(4); budgetQty->setValue(1);
     auto *calc = new QPushButton("Calcular"); auto *save = new QPushButton("Guardar presupuesto"); auto *exportBtn = new QPushButton("Exportar CSV");
+    setAccentButton(calc); setAccentButton(save); setAccentButton(exportBtn);
     controls->addWidget(new QLabel("Cantidad presupuestada")); controls->addWidget(budgetQty); controls->addWidget(new QLabel("Utilidad")); controls->addWidget(m_markup); controls->addWidget(calc); controls->addWidget(save); controls->addWidget(exportBtn);
     layout->addLayout(controls);
     auto *totals = new QHBoxLayout; m_subtotalLabel=new QLabel("Costo unitario neto: $0.00"); m_totalLabel=new QLabel("Total presupuesto: $0.00");
-    m_subtotalLabel->setStyleSheet("font-weight:600"); m_totalLabel->setStyleSheet("font-size:17px;font-weight:700;color:#167d62"); totals->addWidget(m_subtotalLabel); totals->addStretch(); totals->addWidget(m_totalLabel); layout->addLayout(totals);
+    m_subtotalLabel->setStyleSheet(QString("font-weight:600;color:%1;").arg(kColorBlack));
+    m_totalLabel->setStyleSheet(QString("font-size:17px;font-weight:700;color:%1;").arg(kColorBlack)); totals->addWidget(m_subtotalLabel); totals->addStretch(); totals->addWidget(m_totalLabel); layout->addLayout(totals);
     connect(calc,&QPushButton::clicked,this,&MainWindow::calculateBudget);
     connect(save,&QPushButton::clicked,this,&MainWindow::saveBudget);
     connect(exportBtn,&QPushButton::clicked,this,&MainWindow::exportBudget);
@@ -259,7 +308,7 @@ void MainWindow::showPriceHistory() {
     const int id=m_priceResource->currentData().toInt(); if(!id)return;
     QSqlQuery q; q.prepare("SELECT h.fecha,u.nombre,COALESCE(h.precio_anterior::text,'—'),h.precio_nuevo,h.origen FROM historial_precio h JOIN usuario u USING(id_usuario) WHERE id_recurso=:id ORDER BY fecha DESC");q.bindValue(":id",id);
     if(!q.exec()){showDbError(this,q);return;}
-    auto *dialog=new QDialog(this);dialog->setWindowTitle("Historial de precios");dialog->resize(760,400);auto *lay=new QVBoxLayout(dialog);
+    auto *dialog=new QDialog(this);dialog->setWindowTitle("Historial de precios");dialog->resize(760,400);dialog->setStyleSheet(kAppStyleSheet);auto *lay=new QVBoxLayout(dialog);
     auto *table=makeTable(dialog,{"Fecha","Usuario","Precio anterior","Precio nuevo","Origen"});
     while(q.next()){int r=table->rowCount();table->insertRow(r);for(int c=0;c<5;++c)table->setItem(r,c,new QTableWidgetItem(q.value(c).toString()));}
     lay->addWidget(table);dialog->exec();dialog->deleteLater();

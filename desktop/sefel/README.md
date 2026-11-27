@@ -35,3 +35,4 @@ La contraseña de cada usuario se guarda con `crypt()` de `pgcrypto`. El usuario
 - Exportación CSV UTF-8 compatible con Excel, evitando dependencias externas.
 - Los códigos de recurso son automáticos y siguen `PREFIJO-NNNN`: `MAT`, `MO`, `EQP` y `HER` por tipo. Los precios iguales a cero están permitidos.
 - **Cerrar sesión** vuelve a mostrar el login. La matriz de casos funcionales y de seguridad está en `docs/pruebas_funcionales_mvp.md`.
+- Interfaz con paleta rojo, negro, gris y blanco aplicada al login, navegación, formularios, tablas y botones principales.
