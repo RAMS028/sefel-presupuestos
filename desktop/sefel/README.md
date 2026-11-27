@@ -33,6 +33,7 @@ La contraseña de cada usuario se guarda con `crypt()` de `pgcrypto`. El usuario
 - Los precios ficticios de `seed.sql` son solo demostración.
 - El presupuesto conserva el costo unitario neto como copia al momento de guardarlo. La utilidad inicial es 20% y se puede editar.
 - Exportación CSV UTF-8 compatible con Excel, evitando dependencias externas.
-- Los códigos de recurso son automáticos y siguen `PREFIJO-NNNN`: `MAT`, `MO`, `EQP` y `HER` por tipo. Los precios iguales a cero están permitidos.
+- Los códigos de recurso son automáticos y siguen `PREFIJO-NNNN`: `MAT`, `MO`, `EQP` y `HER` por tipo. El precio mínimo permitido es $0,10.
+- Los recursos se retiran del catálogo activo sin borrar historial ni presupuestos. Se pueden quitar líneas del APU en edición y eliminar presupuestos guardados; el APU se elimina solo si deja de tener referencias.
 - **Cerrar sesión** vuelve a mostrar el login. La matriz de casos funcionales y de seguridad está en `docs/pruebas_funcionales_mvp.md`.
 - Interfaz con paleta rojo, negro, gris y blanco aplicada al login, navegación, formularios, tablas y botones principales.

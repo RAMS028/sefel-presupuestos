@@ -18,8 +18,10 @@ CREATE TABLE IF NOT EXISTS recurso (
   descripcion VARCHAR(200) NOT NULL,
   unidad VARCHAR(15) NOT NULL,
   tipo VARCHAR(15) NOT NULL CHECK (tipo IN ('MATERIAL','MANO_OBRA','EQUIPO','HERRAMIENTA')),
-  precio_vigente NUMERIC(14,2) NOT NULL CHECK (precio_vigente >= 0)
+  precio_vigente NUMERIC(14,2) NOT NULL CHECK (precio_vigente > 0),
+  activo BOOLEAN NOT NULL DEFAULT TRUE
 );
+ALTER TABLE recurso ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE;
 -- Normaliza códigos antiguos y arbitrarios para que cumplan el formato del tipo.
 DO $$
 DECLARE r RECORD; prefix TEXT; next_code INTEGER; candidate TEXT;
@@ -61,10 +63,32 @@ CREATE TABLE IF NOT EXISTS historial_precio (
   id_recurso INTEGER NOT NULL REFERENCES recurso(id_recurso) ON DELETE RESTRICT,
   id_usuario INTEGER NOT NULL REFERENCES usuario(id_usuario),
   precio_anterior NUMERIC(14,2),
-  precio_nuevo NUMERIC(14,2) NOT NULL CHECK (precio_nuevo >= 0),
+  precio_nuevo NUMERIC(14,2) NOT NULL CHECK (precio_nuevo > 0),
   origen VARCHAR(10) NOT NULL DEFAULT 'MANUAL' CHECK (origen IN ('MANUAL','AUTOMATICO')),
   fecha TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Corrige recursos heredados en cero a $0,10 y deja trazabilidad si hay usuarios.
+DO $$
+DECLARE migration_user INTEGER;
+BEGIN
+  SELECT id_usuario INTO migration_user FROM usuario ORDER BY id_usuario LIMIT 1;
+  IF migration_user IS NULL THEN
+    UPDATE recurso SET precio_vigente=0.10 WHERE precio_vigente<=0;
+  ELSE
+    WITH fixed AS (
+      UPDATE recurso SET precio_vigente=0.10 WHERE precio_vigente<=0
+      RETURNING id_recurso
+    )
+    INSERT INTO historial_precio(id_recurso,id_usuario,precio_anterior,precio_nuevo,origen)
+      SELECT id_recurso,migration_user,0,0.10,'MANUAL' FROM fixed;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_recurso_precio_positivo' AND conrelid='recurso'::regclass) THEN
+    ALTER TABLE recurso ADD CONSTRAINT ck_recurso_precio_positivo CHECK (precio_vigente > 0) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_historial_precio_positivo' AND conrelid='historial_precio'::regclass) THEN
+    ALTER TABLE historial_precio ADD CONSTRAINT ck_historial_precio_positivo CHECK (precio_nuevo > 0) NOT VALID;
+  END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS apu (
   id_apu SERIAL PRIMARY KEY,
   nombre VARCHAR(150) NOT NULL,

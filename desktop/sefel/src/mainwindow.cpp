@@ -21,6 +21,7 @@
 #include <QFormLayout>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QList>
 
 namespace {
 constexpr const char *kColorRed = "#C62828";
@@ -144,6 +145,7 @@ MainWindow::MainWindow(int userId, const QString &userName, const QString &role,
     m_tabs->setTabEnabled(2, m_canEdit);
     if (!m_canEdit) m_tabs->setCurrentIndex(0);
     reloadResources();
+    reloadSavedBudgets();
 }
 
 void MainWindow::buildResourcesTab() {
@@ -159,18 +161,22 @@ void MainWindow::buildResourcesTab() {
     auto *row = new QHBoxLayout;
     m_code = new QLineEdit; m_code->setReadOnly(true); m_description = new QLineEdit; m_unit = new QLineEdit;
     m_type = new QComboBox; m_type->addItems({"MATERIAL","MANO_OBRA","EQUIPO","HERRAMIENTA"});
-    m_initialPrice = new QDoubleSpinBox; m_initialPrice->setRange(0,999999999); m_initialPrice->setDecimals(2); m_initialPrice->setPrefix("$ ");
+    m_initialPrice = new QDoubleSpinBox; m_initialPrice->setRange(0.10,999999999); m_initialPrice->setDecimals(2); m_initialPrice->setPrefix("$ "); m_initialPrice->setValue(0.10);
     row->addWidget(new QLabel("Código")); row->addWidget(m_code);
     row->addWidget(new QLabel("Descripción")); row->addWidget(m_description,2);
     row->addWidget(new QLabel("Unidad")); row->addWidget(m_unit);
     row->addWidget(m_type); row->addWidget(new QLabel("Precio vigente")); row->addWidget(m_initialPrice);
     form->addRow("Nuevo recurso", row); layout->addLayout(form);
-    auto *add = new QPushButton("Registrar recurso"); layout->addWidget(add,0,Qt::AlignRight);
+    auto *actions = new QHBoxLayout;
+    auto *add = new QPushButton("Registrar recurso");
+    auto *remove = new QPushButton("Retirar recurso del catálogo");
+    actions->addStretch(); actions->addWidget(remove); actions->addWidget(add); layout->addLayout(actions);
     setAccentButton(add);
-    add->setEnabled(m_canEdit); m_code->setEnabled(m_canEdit); m_description->setEnabled(m_canEdit); m_unit->setEnabled(m_canEdit); m_type->setEnabled(m_canEdit); m_initialPrice->setEnabled(m_canEdit);
+    add->setEnabled(m_canEdit); remove->setEnabled(m_canEdit); m_code->setEnabled(m_canEdit); m_description->setEnabled(m_canEdit); m_unit->setEnabled(m_canEdit); m_type->setEnabled(m_canEdit); m_initialPrice->setEnabled(m_canEdit);
     connect(search,&QPushButton::clicked,this,&MainWindow::reloadResources);
     connect(m_resourceFilter,&QLineEdit::returnPressed,this,&MainWindow::reloadResources);
     connect(add,&QPushButton::clicked,this,&MainWindow::addResource);
+    connect(remove,&QPushButton::clicked,this,&MainWindow::deleteResource);
     connect(m_type, &QComboBox::currentTextChanged, this, [this] { refreshCodePreview(); });
     connect(m_resources,&QTableWidget::itemSelectionChanged,this,[this]{
         if (selectedResourceId() > 0) {
@@ -188,7 +194,7 @@ void MainWindow::buildPricesTab() {
     intro->setWordWrap(true); layout->addWidget(intro);
     auto *form = new QFormLayout;
     m_priceResource = new QComboBox;
-    m_newPrice = new QDoubleSpinBox; m_newPrice->setRange(0,999999999); m_newPrice->setDecimals(2); m_newPrice->setPrefix("$ ");
+    m_newPrice = new QDoubleSpinBox; m_newPrice->setRange(0.10,999999999); m_newPrice->setDecimals(2); m_newPrice->setPrefix("$ "); m_newPrice->setValue(0.10);
     form->addRow("Recurso",m_priceResource); form->addRow("Nuevo precio",m_newPrice); layout->addLayout(form);
     auto *buttons = new QHBoxLayout;
     auto *update = new QPushButton("Guardar precio"); auto *history = new QPushButton("Ver historial");
@@ -196,6 +202,13 @@ void MainWindow::buildPricesTab() {
     buttons->addWidget(update); buttons->addWidget(history); buttons->addStretch(); layout->addLayout(buttons);
     connect(update,&QPushButton::clicked,this,&MainWindow::changePrice);
     connect(history,&QPushButton::clicked,this,&MainWindow::showPriceHistory);
+    connect(m_priceResource, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (index < 0) return;
+        QSqlQuery q;
+        q.prepare("SELECT precio_vigente FROM recurso WHERE id_recurso=:id AND activo");
+        q.bindValue(":id",m_priceResource->itemData(index).toInt());
+        if (q.exec() && q.next()) m_newPrice->setValue(q.value(0).toDouble());
+    });
     m_tabs->addTab(page,"Precios e historial · HU-03/04");
 }
 
@@ -216,6 +229,11 @@ void MainWindow::buildBudgetTab() {
     connect(addLine,&QPushButton::clicked,this,&MainWindow::addApuLine);
     m_apuLines=makeTable(page,{"Recurso","Unidad","Cantidad APU","Precio vigente","Costo línea","ID"});
     layout->addWidget(m_apuLines,1);
+    auto *lineActions = new QHBoxLayout;
+    auto *removeLine = new QPushButton("Quitar recurso seleccionado del APU");
+    removeLine->setEnabled(m_canEdit);
+    lineActions->addStretch(); lineActions->addWidget(removeLine); layout->addLayout(lineActions);
+    connect(removeLine, &QPushButton::clicked, this, &MainWindow::removeApuLine);
     auto *controls = new QHBoxLayout;
     m_markup = new QDoubleSpinBox; m_markup->setRange(0,999); m_markup->setDecimals(2); m_markup->setValue(20); m_markup->setSuffix(" %");
     auto *budgetQty = new QDoubleSpinBox; budgetQty->setObjectName("budgetQty"); budgetQty->setRange(0.0001,99999999); budgetQty->setDecimals(4); budgetQty->setValue(1);
@@ -229,18 +247,30 @@ void MainWindow::buildBudgetTab() {
     connect(calc,&QPushButton::clicked,this,&MainWindow::calculateBudget);
     connect(save,&QPushButton::clicked,this,&MainWindow::saveBudget);
     connect(exportBtn,&QPushButton::clicked,this,&MainWindow::exportBudget);
+    auto *savedLabel = new QLabel("Presupuestos guardados");
+    savedLabel->setStyleSheet(QString("font-size:15px;font-weight:700;color:%1;padding-top:8px;").arg(kColorBlack));
+    layout->addWidget(savedLabel);
+    m_savedBudgets = makeTable(page,{"ID","Presupuesto","APU","Fecha","Total"});
+    m_savedBudgets->setMaximumHeight(180);
+    m_savedBudgets->setColumnHidden(0,true);
+    layout->addWidget(m_savedBudgets);
+    auto *deleteBudget = new QPushButton("Eliminar presupuesto y su APU");
+    setAccentButton(deleteBudget);
+    deleteBudget->setEnabled(m_canEdit);
+    layout->addWidget(deleteBudget,0,Qt::AlignRight);
+    connect(deleteBudget,&QPushButton::clicked,this,&MainWindow::deleteSavedBudget);
     m_tabs->addTab(page,"APU y presupuesto · HU-05/06");
 }
 
 void MainWindow::reloadResources() {
-    QSqlQuery q; q.prepare("SELECT id_recurso,codigo,descripcion,unidad,tipo,precio_vigente FROM recurso WHERE (:f='' OR codigo ILIKE :pattern OR descripcion ILIKE :pattern) ORDER BY descripcion");
+    QSqlQuery q; q.prepare("SELECT id_recurso,codigo,descripcion,unidad,tipo,precio_vigente FROM recurso WHERE activo AND (:f='' OR codigo ILIKE :pattern OR descripcion ILIKE :pattern) ORDER BY descripcion");
     const QString f=m_resourceFilter->text().trimmed(); q.bindValue(":f",f); q.bindValue(":pattern","%"+f+"%");
     if (!q.exec()) { showDbError(this,q); return; }
     m_resources->setRowCount(0);
     while(q.next()) { int r=m_resources->rowCount(); m_resources->insertRow(r); for(int c=0;c<6;++c) m_resources->setItem(r,c,new QTableWidgetItem(c==5?QString::number(q.value(c).toDouble(),'f',2):q.value(c).toString())); }
     const int previous=m_priceResource->currentData().toInt();
     m_priceResource->clear(); m_lineResource->clear();
-    QSqlQuery list("SELECT id_recurso,codigo || ' · ' || descripcion || ' ($' || precio_vigente || ')' FROM recurso ORDER BY descripcion");
+    QSqlQuery list("SELECT id_recurso,codigo || ' · ' || descripcion || ' ($' || precio_vigente || ')' FROM recurso WHERE activo ORDER BY descripcion");
     while(list.next()) { m_priceResource->addItem(list.value(1).toString(),list.value(0)); m_lineResource->addItem(list.value(1).toString(),list.value(0)); }
     for(int i=0;i<m_priceResource->count();++i) if(m_priceResource->itemData(i).toInt()==previous) m_priceResource->setCurrentIndex(i);
 }
@@ -290,6 +320,32 @@ void MainWindow::addResource() {
     QMessageBox::information(this,"Recurso registrado",QString("Recurso %1 guardado correctamente.").arg(code));
 }
 
+void MainWindow::deleteResource() {
+    const int id = selectedResourceId();
+    if (id == 0) {
+        QMessageBox::information(this,"Selecciona un recurso","Selecciona una fila del catálogo antes de retirarla.");
+        return;
+    }
+    const int row = m_resources->currentRow();
+    const QString code = m_resources->item(row,1)->text();
+    const auto answer = QMessageBox::question(this,"Retirar recurso",
+        QString("¿Retirar %1 del catálogo activo? Su historial y los presupuestos existentes se conservarán.").arg(code),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) return;
+
+    QSqlQuery q;
+    q.prepare("UPDATE recurso SET activo=FALSE WHERE id_recurso=:id AND activo=TRUE");
+    q.bindValue(":id",id);
+    if (!q.exec()) { showDbError(this,q); return; }
+    if (q.numRowsAffected() != 1) {
+        QMessageBox::information(this,"Recurso ya retirado","El recurso ya no está en el catálogo activo.");
+        reloadResources();
+        return;
+    }
+    reloadResources();
+    QMessageBox::information(this,"Recurso retirado","Se ocultó del catálogo activo. Su historial y referencias se conservaron.");
+}
+
 void MainWindow::changePrice() {
     const int id=m_priceResource->currentData().toInt(); if(!id)return;
     QSqlDatabase::database().transaction();
@@ -327,6 +383,16 @@ void MainWindow::addApuLine() {
     m_apuLines->setItem(row,5,new QTableWidgetItem(QString::number(id)));m_apuLines->setColumnHidden(5,true);calculateBudget();
 }
 
+void MainWindow::removeApuLine() {
+    const int row = m_apuLines->currentRow();
+    if (row < 0) {
+        QMessageBox::information(this,"Selecciona una línea","Selecciona un recurso del APU antes de quitarlo.");
+        return;
+    }
+    m_apuLines->removeRow(row);
+    calculateBudget();
+}
+
 void MainWindow::calculateBudget() {
     m_subtotal=0;for(int r=0;r<m_apuLines->rowCount();++r)m_subtotal+=m_apuLines->item(r,4)->text().toDouble();
     auto *qty=findChild<QDoubleSpinBox*>("budgetQty");const double quantity=qty?qty->value():1;
@@ -347,7 +413,67 @@ void MainWindow::saveBudget() {
     if(!budget.exec()||!budget.next()){QSqlDatabase::database().rollback();showDbError(this,budget);return;}const int budgetId=budget.value(0).toInt();
     QSqlQuery part;part.prepare("INSERT INTO partida(id_presupuesto,id_apu,descripcion,unidad,cantidad,costo_unitario_neto,costo_presupuestado) VALUES(:p,:a,:d,:u,:q,:c,:t)");part.bindValue(":p",budgetId);part.bindValue(":a",apuId);part.bindValue(":d",m_apuName->text().trimmed());part.bindValue(":u",m_apuUnit->text().trimmed());part.bindValue(":q",quantity);part.bindValue(":c",m_subtotal);part.bindValue(":t",total);
     if(!part.exec()){QSqlDatabase::database().rollback();showDbError(this,part);return;}
-    QSqlDatabase::database().commit();QMessageBox::information(this,"Presupuesto guardado",QString("Presupuesto #%1 guardado correctamente.").arg(budgetId));
+    QSqlDatabase::database().commit();
+    reloadSavedBudgets();
+    QMessageBox::information(this,"Presupuesto guardado",QString("Presupuesto #%1 guardado correctamente.").arg(budgetId));
+}
+
+void MainWindow::reloadSavedBudgets() {
+    if (!m_savedBudgets) return;
+    QSqlQuery q("SELECT b.id_presupuesto,b.nombre,COALESCE(a.nombre,'-'),b.fecha::text,b.total "
+                "FROM presupuesto b LEFT JOIN LATERAL ("
+                " SELECT ap.nombre FROM partida p JOIN apu ap USING(id_apu) "
+                " WHERE p.id_presupuesto=b.id_presupuesto ORDER BY p.id_partida LIMIT 1"
+                ") a ON TRUE ORDER BY b.fecha DESC,b.id_presupuesto DESC");
+    if (!q.exec()) { showDbError(this,q); return; }
+    m_savedBudgets->setRowCount(0);
+    while (q.next()) {
+        const int row = m_savedBudgets->rowCount();
+        m_savedBudgets->insertRow(row);
+        for (int column=0; column<5; ++column) {
+            QString value = q.value(column).toString();
+            if (column == 4) value = QString("$ %1").arg(q.value(column).toDouble(),0,'f',2);
+            m_savedBudgets->setItem(row,column,new QTableWidgetItem(value));
+        }
+    }
+}
+
+void MainWindow::deleteSavedBudget() {
+    const int row = m_savedBudgets->currentRow();
+    if (row < 0 || !m_savedBudgets->item(row,0)) {
+        QMessageBox::information(this,"Selecciona un presupuesto","Selecciona un presupuesto guardado para eliminarlo.");
+        return;
+    }
+    const int budgetId = m_savedBudgets->item(row,0)->text().toInt();
+    const QString budgetName = m_savedBudgets->item(row,1)->text();
+    const auto answer = QMessageBox::question(this,"Eliminar presupuesto y APU",
+        QString("¿Eliminar '%1' y sus partidas? Si el APU no está compartido con otro presupuesto, también se eliminará. Esta acción no se puede deshacer.").arg(budgetName),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) return;
+
+    auto db = QSqlDatabase::database();
+    if (!db.transaction()) { QMessageBox::critical(this,"Error","No se pudo iniciar la transacción."); return; }
+    QList<int> apuIds;
+    QSqlQuery findApus;
+    findApus.prepare("SELECT DISTINCT id_apu FROM partida WHERE id_presupuesto=:budget AND id_apu IS NOT NULL");
+    findApus.bindValue(":budget",budgetId);
+    if (!findApus.exec()) { db.rollback(); showDbError(this,findApus); return; }
+    while (findApus.next()) apuIds.append(findApus.value(0).toInt());
+
+    QSqlQuery removeBudget;
+    removeBudget.prepare("DELETE FROM presupuesto WHERE id_presupuesto=:budget");
+    removeBudget.bindValue(":budget",budgetId);
+    if (!removeBudget.exec()) { db.rollback(); showDbError(this,removeBudget); return; }
+    for (const int apuId : apuIds) {
+        QSqlQuery removeApu;
+        removeApu.prepare("DELETE FROM apu WHERE id_apu=:apu AND NOT EXISTS (SELECT 1 FROM partida WHERE id_apu=:ref)");
+        removeApu.bindValue(":apu",apuId);
+        removeApu.bindValue(":ref",apuId);
+        if (!removeApu.exec()) { db.rollback(); showDbError(this,removeApu); return; }
+    }
+    if (!db.commit()) { db.rollback(); QMessageBox::critical(this,"Error","No se pudieron confirmar los cambios."); return; }
+    reloadSavedBudgets();
+    QMessageBox::information(this,"Eliminación completada","Se eliminó el presupuesto. Los recursos e historiales asociados se conservaron.");
 }
 
 void MainWindow::exportBudget() {

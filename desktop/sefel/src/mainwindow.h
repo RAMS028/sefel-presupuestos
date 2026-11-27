@@ -36,11 +36,15 @@ private slots:
     void logout();
     void reloadResources();
     void addResource();
+    void deleteResource();
     void changePrice();
     void showPriceHistory();
     void addApuLine();
+    void removeApuLine();
     void calculateBudget();
     void saveBudget();
+    void reloadSavedBudgets();
+    void deleteSavedBudget();
     void exportBudget();
 private:
     void buildResourcesTab();
@@ -57,6 +61,7 @@ private:
     QComboBox *m_type;
     QDoubleSpinBox *m_initialPrice;
     QTableWidget *m_resources, *m_apuLines;
+    QTableWidget *m_savedBudgets = nullptr;
     QComboBox *m_priceResource;
     QDoubleSpinBox *m_newPrice, *m_markup;
     QLineEdit *m_budgetName, *m_apuName, *m_apuUnit;
