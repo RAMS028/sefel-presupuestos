@@ -1,12 +1,24 @@
 #include "database.h"
 #include "mainwindow.h"
 #include <QApplication>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QMessageBox>
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("SEFEL Desktop");
     QApplication::setOrganizationName("SEFEL");
+    if (qEnvironmentVariable("SEFEL_DB_PASSWORD").isEmpty()
+        && QSqlDatabase::isDriverAvailable("QPSQL")) {
+        bool accepted = false;
+        const QString password = QInputDialog::getText(
+            nullptr, "Conexión a PostgreSQL",
+            "Ingresa la contraseña de PostgreSQL para el usuario configurado.",
+            QLineEdit::Password, QString(), &accepted);
+        if (!accepted) return 0;
+        qputenv("SEFEL_DB_PASSWORD", password.toUtf8());
+    }
     QString error;
     if (!Database::connect(&error)) {
         QMessageBox message(QMessageBox::Critical, "No se pudo iniciar SEFEL", error, QMessageBox::Ok);
