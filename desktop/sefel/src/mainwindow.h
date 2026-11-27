@@ -51,7 +51,7 @@ private:
     void buildPricesTab();
     void buildBudgetTab();
     void refreshCodePreview();
-    QString generateResourceCode() const;
+    QString generateResourceCode();
     int selectedResourceId() const;
     int m_userId;
     QString m_userName, m_role;

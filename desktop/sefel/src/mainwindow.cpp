@@ -66,10 +66,38 @@ void setAccentButton(QPushButton *button) {
 }
 } // namespace
 
-static void showDbError(QWidget *parent, const QSqlQuery &q) {
-    QString detail = q.lastError().text();
-    if (!q.lastQuery().isEmpty()) detail += "\n\nConsulta: " + q.lastQuery();
-    QMessageBox::critical(parent, "Error de base de datos", detail);
+static QString databaseErrorGuidance(const QString &state, const QString &technical) {
+    if (state == "23505") return "Ya existe un registro con ese código o dato único. Actualiza la búsqueda y usa un valor diferente.";
+    if (state == "23503") return "No se puede completar porque el registro está relacionado con otros datos. Revisa las referencias antes de eliminarlo o modificarlo.";
+    if (state == "23514" || state == "23502") return "Uno de los datos no cumple las reglas requeridas. Revisa los campos obligatorios, el tipo y los valores permitidos.";
+    if (state == "22001") return "Un texto supera la longitud permitida. Acórtalo e inténtalo nuevamente.";
+    if (state == "22003" || state == "22P02") return "Un número tiene un formato o valor fuera del rango permitido. Revisa las cantidades, precios y porcentajes.";
+    if (state == "42P01") return "Falta una tabla de la aplicación. Ejecuta database/schema.sql sobre la base de datos SEFEL.";
+    if (state == "42703") return "Falta una columna esperada por esta versión. Actualiza el esquema ejecutando database/schema.sql.";
+    if (state == "42501") return "El usuario de PostgreSQL no tiene permisos para esta operación. Solicita permisos sobre la base SEFEL.";
+    if (state == "28P01" || state == "28000") return "PostgreSQL rechazó el usuario o la contraseña configurados.";
+    if (state == "3D000") return "La base de datos configurada no existe. Créala y carga database/schema.sql.";
+    if (state.startsWith("08") || technical.contains("connection", Qt::CaseInsensitive)
+        || technical.contains("server closed", Qt::CaseInsensitive))
+        return "Se perdió la conexión con PostgreSQL. Comprueba que el servicio siga iniciado y vuelve a abrir la aplicación.";
+    if (state == "40001" || state == "40P01") return "Otro proceso modificó los mismos datos al mismo tiempo. Vuelve a intentar la operación.";
+    if (state == "26000") return "La sesión de base de datos quedó desincronizada. Cierra y vuelve a abrir SEFEL; si persiste, revisa la conexión.";
+    return "No se pudo completar la operación en PostgreSQL. Revisa los datos y la conexión; usa el detalle técnico si necesitas soporte.";
+}
+
+static void showDbError(QWidget *parent, const QSqlQuery &q, const QString &operation = {}) {
+    const QSqlError error = q.lastError();
+    const QString state = error.nativeErrorCode();
+    const QString technical = error.text().isEmpty() ? "PostgreSQL no entregó detalles adicionales." : error.text();
+    QMessageBox message(QMessageBox::Critical, "No se pudo completar la operación",
+                        operation.isEmpty() ? databaseErrorGuidance(state, technical)
+                                            : operation + "\n\n" + databaseErrorGuidance(state, technical),
+                        QMessageBox::Ok, parent);
+    QString details = "SQLSTATE: " + (state.isEmpty() ? QString("desconocido") : state)
+                      + "\nDetalle PostgreSQL: " + technical;
+    if (!q.lastQuery().isEmpty()) details += "\n\nConsulta: " + q.lastQuery();
+    message.setDetailedText(details);
+    message.exec();
 }
 static QTableWidget *makeTable(QWidget *parent, const QStringList &headers) {
     auto *table = new QTableWidget(parent);
@@ -210,7 +238,9 @@ void MainWindow::buildPricesTab() {
         QSqlQuery q;
         q.prepare("SELECT precio_vigente FROM recurso WHERE id_recurso=:id AND activo");
         q.bindValue(":id",m_priceResource->itemData(index).toInt());
-        if (q.exec() && q.next()) m_newPrice->setValue(q.value(0).toDouble());
+        if (!q.exec()) { showDbError(this,q,"No se pudo cargar el precio vigente."); return; }
+        if (q.next()) m_newPrice->setValue(q.value(0).toDouble());
+        else QMessageBox::information(this,"Recurso no disponible","El recurso fue retirado o ya no existe. Actualiza el catálogo.");
         q.finish();
     });
     m_tabs->addTab(page,"Precios e historial · HU-03/04");
@@ -280,7 +310,11 @@ void MainWindow::reloadResources() {
     {
         const QSignalBlocker blockPriceSelection(m_priceResource);
         m_priceResource->clear(); m_lineResource->clear();
-        QSqlQuery list("SELECT id_recurso,codigo || ' · ' || descripcion || ' ($' || precio_vigente || ')' FROM recurso WHERE activo ORDER BY descripcion");
+        QSqlQuery list;
+        if (!list.exec("SELECT id_recurso,codigo || ' · ' || descripcion || ' ($' || precio_vigente || ') FROM recurso WHERE activo ORDER BY descripcion")) {
+            showDbError(this,list,"No se pudo cargar la lista de recursos para precios y APU.");
+            return;
+        }
         while(list.next()) { m_priceResource->addItem(list.value(1).toString(),list.value(0)); m_lineResource->addItem(list.value(1).toString(),list.value(0)); }
         list.finish();
         for(int i=0;i<m_priceResource->count();++i) if(m_priceResource->itemData(i).toInt()==previous) m_priceResource->setCurrentIndex(i);
@@ -290,18 +324,20 @@ void MainWindow::reloadResources() {
         QSqlQuery currentPrice;
         currentPrice.prepare("SELECT precio_vigente FROM recurso WHERE id_recurso=:id AND activo");
         currentPrice.bindValue(":id",selected);
-        if (currentPrice.exec() && currentPrice.next()) m_newPrice->setValue(currentPrice.value(0).toDouble());
+        if (!currentPrice.exec()) showDbError(this,currentPrice,"No se pudo consultar el precio del recurso seleccionado.");
+        else if (currentPrice.next()) m_newPrice->setValue(currentPrice.value(0).toDouble());
         currentPrice.finish();
     }
 }
 
-QString MainWindow::generateResourceCode() const {
+QString MainWindow::generateResourceCode() {
     const QString prefix = codePrefix(m_type->currentText());
     QSqlQuery q;
     q.prepare("SELECT COALESCE(MAX(substring(codigo from '[0-9]+$')::integer),0)+1 "
               "FROM recurso WHERE codigo LIKE :pattern");
     q.bindValue(":pattern", prefix + "-%");
-    if (!q.exec() || !q.next()) return {};
+    if (!q.exec()) { showDbError(this,q,"No se pudo generar el siguiente código de recurso."); return {}; }
+    if (!q.next()) { QMessageBox::critical(this,"No se pudo generar el código","PostgreSQL no devolvió un código. Intenta nuevamente."); return {}; }
     return prefix + "-" + QString("%1").arg(q.value(0).toInt(), 4, 10, QChar('0'));
 }
 
@@ -323,11 +359,11 @@ int MainWindow::selectedResourceId() const {
 void MainWindow::addResource() {
     if(m_description->text().trimmed().isEmpty()||m_unit->text().trimmed().isEmpty()) { QMessageBox::warning(this,"Datos requeridos","Completa descripción y unidad."); return; }
     auto db = QSqlDatabase::database();
-    if (!db.transaction()) { QMessageBox::critical(this,"Error","No se pudo iniciar la transacción."); return; }
+    if (!db.transaction()) { QMessageBox::critical(this,"No se pudo iniciar el registro","No se pudo iniciar una transacción con PostgreSQL. Comprueba la conexión y los permisos de escritura.\n\nDetalle: " + db.lastError().text()); return; }
     QSqlQuery lock;
     if (!lock.exec("LOCK TABLE recurso IN EXCLUSIVE MODE")) { db.rollback(); showDbError(this,lock); return; }
     const QString code = generateResourceCode();
-    if (code.isEmpty()) { db.rollback(); QMessageBox::critical(this,"Error","No se pudo generar el código del recurso."); return; }
+    if (code.isEmpty()) { db.rollback(); return; } // generateResourceCode ya mostró la causa.
     const double price=m_initialPrice->value();
     QSqlQuery q; q.prepare("INSERT INTO recurso(codigo,descripcion,unidad,tipo,precio_vigente) VALUES(:c,:d,:u,:t,:p) RETURNING id_recurso");
     q.bindValue(":c",code); q.bindValue(":d",m_description->text().trimmed()); q.bindValue(":u",m_unit->text().trimmed()); q.bindValue(":t",m_type->currentText()); q.bindValue(":p",price);
@@ -336,7 +372,7 @@ void MainWindow::addResource() {
     q.finish();
     QSqlQuery h; h.prepare("INSERT INTO historial_precio(id_recurso,id_usuario,precio_anterior,precio_nuevo,origen) VALUES(:r,:u,NULL,:p,'MANUAL')"); h.bindValue(":r",id); h.bindValue(":u",m_userId); h.bindValue(":p",price);
     if(!h.exec()) { QSqlDatabase::database().rollback(); showDbError(this,h); return; }
-    if (!db.commit()) { db.rollback(); QMessageBox::critical(this,"Error","No se pudo confirmar el registro."); return; }
+    if (!db.commit()) { const QString detail=db.lastError().text(); db.rollback(); QMessageBox::critical(this,"No se pudo guardar el recurso","PostgreSQL no confirmó el registro. No se guardaron los cambios.\n\nDetalle: " + detail); return; }
     m_description->clear();m_unit->clear();m_initialPrice->setValue(0);reloadResources();refreshCodePreview();
     QMessageBox::information(this,"Recurso registrado",QString("Recurso %1 guardado correctamente.").arg(code));
 }
@@ -368,10 +404,13 @@ void MainWindow::deleteResource() {
 }
 
 void MainWindow::changePrice() {
-    const int id=m_priceResource->currentData().toInt(); if(!id)return;
-    QSqlDatabase::database().transaction();
+    const int id=m_priceResource->currentData().toInt();
+    if(!id){QMessageBox::information(this,"Selecciona un recurso","No hay recursos activos disponibles para actualizar. Registra o reactiva un recurso primero.");return;}
+    auto db = QSqlDatabase::database();
+    if (!db.transaction()) { QMessageBox::critical(this,"No se pudo actualizar el precio","No se pudo iniciar una transacción con PostgreSQL. Comprueba la conexión y los permisos.\n\nDetalle: " + db.lastError().text()); return; }
     QSqlQuery q; q.prepare("SELECT precio_vigente FROM recurso WHERE id_recurso=:id FOR UPDATE"); q.bindValue(":id",id);
-    if(!q.exec()||!q.next()) {QSqlDatabase::database().rollback();showDbError(this,q);return;}
+    if(!q.exec()) {db.rollback();showDbError(this,q,"No se pudo bloquear y consultar el precio actual.");return;}
+    if(!q.next()) {db.rollback();QMessageBox::information(this,"Recurso no disponible","El recurso ya no existe o fue retirado del catálogo. Actualiza la lista e inténtalo otra vez.");return;}
     const double old=q.value(0).toDouble(), now=m_newPrice->value();
     q.finish();
     QSqlQuery update; update.prepare("UPDATE recurso SET precio_vigente=:p WHERE id_recurso=:id"); update.bindValue(":p",now);update.bindValue(":id",id);
@@ -380,7 +419,8 @@ void MainWindow::changePrice() {
     QSqlQuery hist; hist.prepare("INSERT INTO historial_precio(id_recurso,id_usuario,precio_anterior,precio_nuevo,origen) VALUES(:r,:u,:o,:n,'MANUAL')"); hist.bindValue(":r",id);hist.bindValue(":u",m_userId);hist.bindValue(":o",old);hist.bindValue(":n",now);
     if(!hist.exec()) {QSqlDatabase::database().rollback();showDbError(this,hist);return;}
     hist.finish();
-    QSqlDatabase::database().commit();reloadResources();QMessageBox::information(this,"Precio actualizado","El cambio quedó registrado en el historial.");
+    if (!db.commit()) { const QString detail=db.lastError().text(); db.rollback(); QMessageBox::critical(this,"No se pudo actualizar el precio","PostgreSQL no confirmó el cambio. El precio y su historial no se guardaron.\n\nDetalle: " + detail); return; }
+    reloadResources();QMessageBox::information(this,"Precio actualizado","El cambio quedó registrado en el historial.");
 }
 
 void MainWindow::showPriceHistory() {
@@ -394,9 +434,11 @@ void MainWindow::showPriceHistory() {
 }
 
 void MainWindow::addApuLine() {
-    const int id=m_lineResource->currentData().toInt();if(!id)return;
+    const int id=m_lineResource->currentData().toInt();
+    if(!id){QMessageBox::information(this,"No hay recursos disponibles","Registra un recurso activo antes de agregar líneas al APU.");return;}
     QSqlQuery q;q.prepare("SELECT descripcion,unidad,precio_vigente FROM recurso WHERE id_recurso=:id");q.bindValue(":id",id);
-    if(!q.exec()||!q.next()){showDbError(this,q);return;}
+    if(!q.exec()){showDbError(this,q,"No se pudo consultar el recurso para agregarlo al APU.");return;}
+    if(!q.next()){QMessageBox::warning(this,"Recurso no disponible","El recurso ya no existe o fue retirado del catálogo. Actualiza la lista e inténtalo otra vez.");return;}
     for(int r=0;r<m_apuLines->rowCount();++r)if(m_apuLines->item(r,5)&&m_apuLines->item(r,5)->text().toInt()==id){QMessageBox::warning(this,"Recurso duplicado","Cada recurso se agrega una sola vez al APU.");return;}
     const int row=m_apuLines->rowCount();m_apuLines->insertRow(row);
     m_apuLines->setItem(row,0,new QTableWidgetItem(q.value(0).toString()));m_apuLines->setItem(row,1,new QTableWidgetItem(q.value(1).toString()));
@@ -428,16 +470,21 @@ void MainWindow::saveBudget() {
     calculateBudget();
     if(m_budgetName->text().trimmed().isEmpty()||m_apuName->text().trimmed().isEmpty()||m_apuLines->rowCount()==0){QMessageBox::warning(this,"Datos requeridos","Indica el presupuesto, la actividad APU y agrega al menos un recurso.");return;}
     auto *qty=findChild<QDoubleSpinBox*>("budgetQty");const double quantity=qty->value();const double total=m_subtotal*quantity*(1+m_markup->value()/100.0);
-    QSqlDatabase::database().transaction();
+    auto db = QSqlDatabase::database();
+    if (!db.transaction()) { QMessageBox::critical(this,"No se pudo guardar el presupuesto","No se pudo iniciar una transacción con PostgreSQL. Comprueba la conexión y los permisos de escritura.\n\nDetalle: " + db.lastError().text()); return; }
     QSqlQuery apu;apu.prepare("INSERT INTO apu(nombre,unidad) VALUES(:n,:u) RETURNING id_apu");apu.bindValue(":n",m_apuName->text().trimmed());apu.bindValue(":u",m_apuUnit->text().trimmed());
-    if(!apu.exec()||!apu.next()){QSqlDatabase::database().rollback();showDbError(this,apu);return;}const int apuId=apu.value(0).toInt();
+    if(!apu.exec()){db.rollback();showDbError(this,apu,"No se pudo crear la actividad APU.");return;}
+    if(!apu.next()){db.rollback();QMessageBox::critical(this,"No se creó el APU","PostgreSQL no devolvió el identificador del APU. Intenta guardar nuevamente.");return;}
+    const int apuId=apu.value(0).toInt();
     apu.finish();
     for(int r=0;r<m_apuLines->rowCount();++r){QSqlQuery line;line.prepare("INSERT INTO apu_detalle(id_apu,id_recurso,cantidad) VALUES(:a,:r,:q)");line.bindValue(":a",apuId);line.bindValue(":r",m_apuLines->item(r,5)->text().toInt());line.bindValue(":q",m_apuLines->item(r,2)->text().toDouble());if(!line.exec()){QSqlDatabase::database().rollback();showDbError(this,line);return;}line.finish();}
     QSqlQuery budget;budget.prepare("INSERT INTO presupuesto(nombre,utilidad_pct,total,id_usuario) VALUES(:n,:u,:t,:id) RETURNING id_presupuesto");budget.bindValue(":n",m_budgetName->text().trimmed());budget.bindValue(":u",m_markup->value());budget.bindValue(":t",total);budget.bindValue(":id",m_userId);
-    if(!budget.exec()||!budget.next()){QSqlDatabase::database().rollback();showDbError(this,budget);return;}const int budgetId=budget.value(0).toInt();budget.finish();
+    if(!budget.exec()){db.rollback();showDbError(this,budget,"No se pudo crear el presupuesto.");return;}
+    if(!budget.next()){db.rollback();QMessageBox::critical(this,"No se creó el presupuesto","PostgreSQL no devolvió el identificador del presupuesto. Intenta guardar nuevamente.");return;}
+    const int budgetId=budget.value(0).toInt();budget.finish();
     QSqlQuery part;part.prepare("INSERT INTO partida(id_presupuesto,id_apu,descripcion,unidad,cantidad,costo_unitario_neto,costo_presupuestado) VALUES(:p,:a,:d,:u,:q,:c,:t)");part.bindValue(":p",budgetId);part.bindValue(":a",apuId);part.bindValue(":d",m_apuName->text().trimmed());part.bindValue(":u",m_apuUnit->text().trimmed());part.bindValue(":q",quantity);part.bindValue(":c",m_subtotal);part.bindValue(":t",total);
     if(!part.exec()){QSqlDatabase::database().rollback();showDbError(this,part);return;}part.finish();
-    QSqlDatabase::database().commit();
+    if (!db.commit()) { const QString detail=db.lastError().text(); db.rollback(); QMessageBox::critical(this,"No se pudo guardar el presupuesto","PostgreSQL no confirmó el presupuesto. No se guardaron los cambios.\n\nDetalle: " + detail); return; }
     reloadSavedBudgets();
     QMessageBox::information(this,"Presupuesto guardado",QString("Presupuesto #%1 guardado correctamente.").arg(budgetId));
 }
@@ -479,7 +526,7 @@ void MainWindow::deleteSavedBudget() {
     if (answer != QMessageBox::Yes) return;
 
     auto db = QSqlDatabase::database();
-    if (!db.transaction()) { QMessageBox::critical(this,"Error","No se pudo iniciar la transacción."); return; }
+    if (!db.transaction()) { QMessageBox::critical(this,"No se pudo eliminar el presupuesto","No se pudo iniciar una transacción con PostgreSQL. Comprueba la conexión y los permisos de escritura.\n\nDetalle: " + db.lastError().text()); return; }
     QList<int> apuIds;
     QSqlQuery findApus;
     findApus.prepare("SELECT DISTINCT id_apu FROM partida WHERE id_presupuesto=:budget AND id_apu IS NOT NULL");
@@ -500,7 +547,7 @@ void MainWindow::deleteSavedBudget() {
         removeApu.bindValue(":ref",apuId);
         if (!removeApu.exec()) { db.rollback(); showDbError(this,removeApu); return; }
     }
-    if (!db.commit()) { db.rollback(); QMessageBox::critical(this,"Error","No se pudieron confirmar los cambios."); return; }
+    if (!db.commit()) { const QString detail=db.lastError().text(); db.rollback(); QMessageBox::critical(this,"No se pudo eliminar el presupuesto","PostgreSQL no confirmó la eliminación; se cancelaron los cambios.\n\nDetalle: " + detail); return; }
     reloadSavedBudgets();
     QMessageBox::information(this,"Eliminación completada","Se eliminó el presupuesto. Los recursos e historiales asociados se conservaron.");
 }
@@ -508,9 +555,11 @@ void MainWindow::deleteSavedBudget() {
 void MainWindow::exportBudget() {
     calculateBudget();if(m_apuLines->rowCount()==0){QMessageBox::information(this,"Sin datos","Agrega recursos al APU antes de exportar.");return;}
     const QString path=QFileDialog::getSaveFileName(this,"Exportar presupuesto",m_budgetName->text().trimmed()+".csv","CSV (*.csv)");if(path.isEmpty())return;
-    QFile file(path);if(!file.open(QIODevice::WriteOnly|QIODevice::Text)){QMessageBox::critical(this,"Error","No se pudo escribir el archivo.");return;}
+    QFile file(path);if(!file.open(QIODevice::WriteOnly|QIODevice::Text)){QMessageBox::critical(this,"No se pudo exportar el archivo","No se pudo crear o escribir el CSV. Comprueba que la carpeta exista, que tengas permisos y que el archivo no esté abierto en otro programa.\n\nDetalle: " + file.errorString());return;}
     QTextStream out(&file);out.setEncoding(QStringConverter::Utf8);out<<"Presupuesto;"<<m_budgetName->text()<<"\nActividad;"<<m_apuName->text()<<"\nRecurso;Unidad;Cantidad APU;Precio vigente;Costo línea\n";
     for(int r=0;r<m_apuLines->rowCount();++r)out<<m_apuLines->item(r,0)->text()<<';'<<m_apuLines->item(r,1)->text()<<';'<<m_apuLines->item(r,2)->text()<<';'<<m_apuLines->item(r,3)->text()<<';'<<m_apuLines->item(r,4)->text()<<"\n";
     auto *qty=findChild<QDoubleSpinBox*>("budgetQty");out<<"Costo unitario neto;;; ;"<<QString::number(m_subtotal,'f',2)<<"\nCantidad presupuestada;"<<qty->value()<<"\nUtilidad (%);"<<m_markup->value()<<"\nTotal presupuesto;;; ;"<<m_totalLabel->text().section('$',-1)<<"\n";
-    file.close();QMessageBox::information(this,"Exportación lista","Presupuesto exportado como CSV compatible con Excel.");
+    file.close();
+    if (file.error() != QFileDevice::NoError) { QMessageBox::critical(this,"Exportación incompleta","Ocurrió un error mientras se escribía el CSV. Comprueba el espacio disponible y los permisos de la carpeta.\n\nDetalle: " + file.errorString()); return; }
+    QMessageBox::information(this,"Exportación lista","Presupuesto exportado como CSV compatible con Excel.");
 }

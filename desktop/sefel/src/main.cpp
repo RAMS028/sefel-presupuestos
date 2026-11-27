@@ -9,8 +9,13 @@ int main(int argc, char *argv[]) {
     QApplication::setOrganizationName("SEFEL");
     QString error;
     if (!Database::connect(&error)) {
-        QMessageBox::critical(nullptr, "No se pudo conectar a PostgreSQL",
-            "Verifica las variables SEFEL_DB_* y que la base de datos esté creada.\n\n" + error);
+        QMessageBox message(QMessageBox::Critical, "No se pudo iniciar SEFEL", error, QMessageBox::Ok);
+        const int detailsAt = error.indexOf("\n\nDetalle técnico");
+        if (detailsAt >= 0) {
+            message.setText(error.left(detailsAt));
+            message.setDetailedText(error.mid(detailsAt + 2));
+        }
+        message.exec();
         return 1;
     }
     constexpr int logoutExitCode = 42;
