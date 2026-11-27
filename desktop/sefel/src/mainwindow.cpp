@@ -67,7 +67,9 @@ void setAccentButton(QPushButton *button) {
 } // namespace
 
 static void showDbError(QWidget *parent, const QSqlQuery &q) {
-    QMessageBox::critical(parent, "Error de base de datos", q.lastError().text());
+    QString detail = q.lastError().text();
+    if (!q.lastQuery().isEmpty()) detail += "\n\nConsulta: " + q.lastQuery();
+    QMessageBox::critical(parent, "Error de base de datos", detail);
 }
 static QTableWidget *makeTable(QWidget *parent, const QStringList &headers) {
     auto *table = new QTableWidget(parent);
@@ -265,7 +267,11 @@ void MainWindow::buildBudgetTab() {
 }
 
 void MainWindow::reloadResources() {
-    QSqlQuery q; q.prepare("SELECT id_recurso,codigo,descripcion,unidad,tipo,precio_vigente FROM recurso WHERE activo AND (:f='' OR codigo ILIKE :pattern OR descripcion ILIKE :pattern) ORDER BY descripcion");
+    QSqlQuery q;
+    if (!q.prepare("SELECT id_recurso,codigo,descripcion,unidad,tipo,precio_vigente FROM recurso WHERE activo AND (:f='' OR codigo ILIKE :pattern OR descripcion ILIKE :pattern) ORDER BY descripcion")) {
+        showDbError(this,q);
+        return;
+    }
     const QString f=m_resourceFilter->text().trimmed(); q.bindValue(":f",f); q.bindValue(":pattern","%"+f+"%");
     if (!q.exec()) { showDbError(this,q); return; }
     m_resources->setRowCount(0);
