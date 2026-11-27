@@ -444,12 +444,15 @@ void MainWindow::saveBudget() {
 
 void MainWindow::reloadSavedBudgets() {
     if (!m_savedBudgets) return;
-    QSqlQuery q("SELECT b.id_presupuesto,b.nombre,COALESCE(a.nombre,'-'),b.fecha::text,b.total "
+    QSqlQuery q;
+    if (!q.exec("SELECT b.id_presupuesto,b.nombre,COALESCE(a.nombre,'-'),b.fecha::text,b.total "
                 "FROM presupuesto b LEFT JOIN LATERAL ("
                 " SELECT ap.nombre FROM partida p JOIN apu ap USING(id_apu) "
                 " WHERE p.id_presupuesto=b.id_presupuesto ORDER BY p.id_partida LIMIT 1"
-                ") a ON TRUE ORDER BY b.fecha DESC,b.id_presupuesto DESC");
-    if (!q.exec()) { showDbError(this,q); return; }
+                ") a ON TRUE ORDER BY b.fecha DESC,b.id_presupuesto DESC")) {
+        showDbError(this,q);
+        return;
+    }
     m_savedBudgets->setRowCount(0);
     while (q.next()) {
         const int row = m_savedBudgets->rowCount();
