@@ -13,6 +13,7 @@
 #include <QPushButton>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSignalBlocker>
 #include <QTextStream>
 #include <QStringConverter>
 #include <QTabWidget>
@@ -208,6 +209,7 @@ void MainWindow::buildPricesTab() {
         q.prepare("SELECT precio_vigente FROM recurso WHERE id_recurso=:id AND activo");
         q.bindValue(":id",m_priceResource->itemData(index).toInt());
         if (q.exec() && q.next()) m_newPrice->setValue(q.value(0).toDouble());
+        q.finish();
     });
     m_tabs->addTab(page,"Precios e historial · HU-03/04");
 }
@@ -269,10 +271,22 @@ void MainWindow::reloadResources() {
     m_resources->setRowCount(0);
     while(q.next()) { int r=m_resources->rowCount(); m_resources->insertRow(r); for(int c=0;c<6;++c) m_resources->setItem(r,c,new QTableWidgetItem(c==5?QString::number(q.value(c).toDouble(),'f',2):q.value(c).toString())); }
     const int previous=m_priceResource->currentData().toInt();
-    m_priceResource->clear(); m_lineResource->clear();
-    QSqlQuery list("SELECT id_recurso,codigo || ' · ' || descripcion || ' ($' || precio_vigente || ')' FROM recurso WHERE activo ORDER BY descripcion");
-    while(list.next()) { m_priceResource->addItem(list.value(1).toString(),list.value(0)); m_lineResource->addItem(list.value(1).toString(),list.value(0)); }
-    for(int i=0;i<m_priceResource->count();++i) if(m_priceResource->itemData(i).toInt()==previous) m_priceResource->setCurrentIndex(i);
+    {
+        const QSignalBlocker blockPriceSelection(m_priceResource);
+        m_priceResource->clear(); m_lineResource->clear();
+        QSqlQuery list("SELECT id_recurso,codigo || ' · ' || descripcion || ' ($' || precio_vigente || ')' FROM recurso WHERE activo ORDER BY descripcion");
+        while(list.next()) { m_priceResource->addItem(list.value(1).toString(),list.value(0)); m_lineResource->addItem(list.value(1).toString(),list.value(0)); }
+        list.finish();
+        for(int i=0;i<m_priceResource->count();++i) if(m_priceResource->itemData(i).toInt()==previous) m_priceResource->setCurrentIndex(i);
+    }
+    const int selected = m_priceResource->currentData().toInt();
+    if (selected > 0) {
+        QSqlQuery currentPrice;
+        currentPrice.prepare("SELECT precio_vigente FROM recurso WHERE id_recurso=:id AND activo");
+        currentPrice.bindValue(":id",selected);
+        if (currentPrice.exec() && currentPrice.next()) m_newPrice->setValue(currentPrice.value(0).toDouble());
+        currentPrice.finish();
+    }
 }
 
 QString MainWindow::generateResourceCode() const {
@@ -313,6 +327,7 @@ void MainWindow::addResource() {
     q.bindValue(":c",code); q.bindValue(":d",m_description->text().trimmed()); q.bindValue(":u",m_unit->text().trimmed()); q.bindValue(":t",m_type->currentText()); q.bindValue(":p",price);
     if(!q.exec()||!q.next()) { QSqlDatabase::database().rollback(); showDbError(this,q); return; }
     const int id=q.value(0).toInt();
+    q.finish();
     QSqlQuery h; h.prepare("INSERT INTO historial_precio(id_recurso,id_usuario,precio_anterior,precio_nuevo,origen) VALUES(:r,:u,NULL,:p,'MANUAL')"); h.bindValue(":r",id); h.bindValue(":u",m_userId); h.bindValue(":p",price);
     if(!h.exec()) { QSqlDatabase::database().rollback(); showDbError(this,h); return; }
     if (!db.commit()) { db.rollback(); QMessageBox::critical(this,"Error","No se pudo confirmar el registro."); return; }
@@ -352,11 +367,13 @@ void MainWindow::changePrice() {
     QSqlQuery q; q.prepare("SELECT precio_vigente FROM recurso WHERE id_recurso=:id FOR UPDATE"); q.bindValue(":id",id);
     if(!q.exec()||!q.next()) {QSqlDatabase::database().rollback();showDbError(this,q);return;}
     const double old=q.value(0).toDouble(), now=m_newPrice->value();
+    q.finish();
     QSqlQuery update; update.prepare("UPDATE recurso SET precio_vigente=:p WHERE id_recurso=:id"); update.bindValue(":p",now);update.bindValue(":id",id);
+    if(!update.exec()) {QSqlDatabase::database().rollback();showDbError(this,update);return;}
+    update.finish();
     QSqlQuery hist; hist.prepare("INSERT INTO historial_precio(id_recurso,id_usuario,precio_anterior,precio_nuevo,origen) VALUES(:r,:u,:o,:n,'MANUAL')"); hist.bindValue(":r",id);hist.bindValue(":u",m_userId);hist.bindValue(":o",old);hist.bindValue(":n",now);
-    const bool updateOk=update.exec();
-    const bool historyOk=updateOk && hist.exec();
-    if(!updateOk||!historyOk) {QSqlDatabase::database().rollback();showDbError(this,updateOk?hist:update);return;}
+    if(!hist.exec()) {QSqlDatabase::database().rollback();showDbError(this,hist);return;}
+    hist.finish();
     QSqlDatabase::database().commit();reloadResources();QMessageBox::information(this,"Precio actualizado","El cambio quedó registrado en el historial.");
 }
 
@@ -408,11 +425,12 @@ void MainWindow::saveBudget() {
     QSqlDatabase::database().transaction();
     QSqlQuery apu;apu.prepare("INSERT INTO apu(nombre,unidad) VALUES(:n,:u) RETURNING id_apu");apu.bindValue(":n",m_apuName->text().trimmed());apu.bindValue(":u",m_apuUnit->text().trimmed());
     if(!apu.exec()||!apu.next()){QSqlDatabase::database().rollback();showDbError(this,apu);return;}const int apuId=apu.value(0).toInt();
-    for(int r=0;r<m_apuLines->rowCount();++r){QSqlQuery line;line.prepare("INSERT INTO apu_detalle(id_apu,id_recurso,cantidad) VALUES(:a,:r,:q)");line.bindValue(":a",apuId);line.bindValue(":r",m_apuLines->item(r,5)->text().toInt());line.bindValue(":q",m_apuLines->item(r,2)->text().toDouble());if(!line.exec()){QSqlDatabase::database().rollback();showDbError(this,line);return;}}
+    apu.finish();
+    for(int r=0;r<m_apuLines->rowCount();++r){QSqlQuery line;line.prepare("INSERT INTO apu_detalle(id_apu,id_recurso,cantidad) VALUES(:a,:r,:q)");line.bindValue(":a",apuId);line.bindValue(":r",m_apuLines->item(r,5)->text().toInt());line.bindValue(":q",m_apuLines->item(r,2)->text().toDouble());if(!line.exec()){QSqlDatabase::database().rollback();showDbError(this,line);return;}line.finish();}
     QSqlQuery budget;budget.prepare("INSERT INTO presupuesto(nombre,utilidad_pct,total,id_usuario) VALUES(:n,:u,:t,:id) RETURNING id_presupuesto");budget.bindValue(":n",m_budgetName->text().trimmed());budget.bindValue(":u",m_markup->value());budget.bindValue(":t",total);budget.bindValue(":id",m_userId);
-    if(!budget.exec()||!budget.next()){QSqlDatabase::database().rollback();showDbError(this,budget);return;}const int budgetId=budget.value(0).toInt();
+    if(!budget.exec()||!budget.next()){QSqlDatabase::database().rollback();showDbError(this,budget);return;}const int budgetId=budget.value(0).toInt();budget.finish();
     QSqlQuery part;part.prepare("INSERT INTO partida(id_presupuesto,id_apu,descripcion,unidad,cantidad,costo_unitario_neto,costo_presupuestado) VALUES(:p,:a,:d,:u,:q,:c,:t)");part.bindValue(":p",budgetId);part.bindValue(":a",apuId);part.bindValue(":d",m_apuName->text().trimmed());part.bindValue(":u",m_apuUnit->text().trimmed());part.bindValue(":q",quantity);part.bindValue(":c",m_subtotal);part.bindValue(":t",total);
-    if(!part.exec()){QSqlDatabase::database().rollback();showDbError(this,part);return;}
+    if(!part.exec()){QSqlDatabase::database().rollback();showDbError(this,part);return;}part.finish();
     QSqlDatabase::database().commit();
     reloadSavedBudgets();
     QMessageBox::information(this,"Presupuesto guardado",QString("Presupuesto #%1 guardado correctamente.").arg(budgetId));
@@ -459,11 +477,13 @@ void MainWindow::deleteSavedBudget() {
     findApus.bindValue(":budget",budgetId);
     if (!findApus.exec()) { db.rollback(); showDbError(this,findApus); return; }
     while (findApus.next()) apuIds.append(findApus.value(0).toInt());
+    findApus.finish();
 
     QSqlQuery removeBudget;
     removeBudget.prepare("DELETE FROM presupuesto WHERE id_presupuesto=:budget");
     removeBudget.bindValue(":budget",budgetId);
     if (!removeBudget.exec()) { db.rollback(); showDbError(this,removeBudget); return; }
+    removeBudget.finish();
     for (const int apuId : apuIds) {
         QSqlQuery removeApu;
         removeApu.prepare("DELETE FROM apu WHERE id_apu=:apu AND NOT EXISTS (SELECT 1 FROM partida WHERE id_apu=:ref)");
